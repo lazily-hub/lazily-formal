@@ -1,6 +1,7 @@
 import LazilyFormal.Primitive
 import LazilyFormal.StateMachine
 import LazilyFormal.StateChart
+import LazilyFormal.AdStateChart
 import LazilyFormal.Reactive
 import LazilyFormal.ThreadSafe
 import LazilyFormal.Collection
