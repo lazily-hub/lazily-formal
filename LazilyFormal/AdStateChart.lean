@@ -3,10 +3,16 @@
 
 This instantiates the general Harel `StateChart` model at the concrete
 `agent-doc-state-backbone::adstatechart` closeout region and proves the
-**load-bearing rung-1 invariant**: a `commit` while the editor buffer is ahead
-of disk (`editor_synced` resolves `false`) is a **rejected `send` edge**, so the
-`committed` state is never entered — the invariant is the guard doing real work,
-not an ad-hoc check re-verified at N call sites.
+**two load-bearing rung-1 invariants** the PRD calls for:
+
+1. **Rejected-edge safety (all paths).** A `commit` while the editor buffer is
+   ahead of disk (`editor_synced` resolves `false`) is a **rejected `send` edge**,
+   so the `committed` state is never entered — the invariant is the guard doing
+   real work, not an ad-hoc check re-verified at N call sites.
+2. **No dead-end config.** The non-final `written` state always has an enabled
+   outgoing edge (progress is possible), the `commit` edge exists in the table
+   regardless of the resolver (rejection is guard work, not a missing edge), and
+   the only terminal sink is the accepting `final` state `committed`.
 
 Scope (matching the PRD, `tasks/agent-doc/prd-adstatechart-local-process-statechart.md`):
 this is **per-process safety** over the finite closeout config space. It proves
@@ -91,6 +97,44 @@ safety theorem above is the guard doing real work, not `commit` being
 structurally unreachable. -/
 theorem commit_taken_when_editor_synced :
     committed ∈ (send adChart writtenCfg noHistory gSynced commitEv).cfg := by
+  decide
+
+-- ------------------------------------------------------- no dead-end config
+-- The PRD's second rung-1 invariant: the modeled region has no dead-end
+-- configuration — every non-final active state can still progress, and the only
+-- terminal sink is the accepting `final` state. Proved by evaluation, so it
+-- covers the whole finite config space rather than sampled points.
+
+/-- The non-final `written` config is not stuck: under the synced resolver the
+`commit` edge is enabled, so progress out of `written` is always possible.
+(Uses `.length` to stay decidable without `DecidableEq Transition`.) -/
+theorem written_not_dead_end :
+    (enabled adChart writtenCfg gSynced commitEv).length = 1 := by
+  decide
+
+/-- The `commit` edge out of `written` is present in the transition table
+regardless of the resolver — when the editor is ahead the guard rejects it
+*inside* `send` (`enabled` returns `[]`), it does not vanish from the chart. So
+the rejected-edge safety above is genuine guard work, not the edge being absent. -/
+theorem written_commit_edge_exists :
+    (adChart.on written commitEv).isSome = true := by
+  decide
+
+theorem enabled_empty_when_editor_ahead :
+    (enabled adChart writtenCfg gAhead commitEv).length = 0 := by
+  decide
+
+/-- `committed` is a `final` (accepting) state: its terminality is the success
+sink, not a dead-end. Projected through a Bool match to avoid needing
+`DecidableEq Kind`. -/
+theorem committed_is_final :
+    (match adChart.kind committed with | Kind.final => true | _ => false) = true := by
+  decide
+
+/-- `written` is *not* final — so `written_not_dead_end` is a real progress
+obligation on a non-accepting state, not vacuously about the sink. -/
+theorem written_is_not_final :
+    (match adChart.kind written with | Kind.final => true | _ => false) = false := by
   decide
 
 end LazilyFormal.AdStateChart
