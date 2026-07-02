@@ -2,7 +2,9 @@ import LazilyFormal.Primitive
 import LazilyFormal.StateMachine
 import LazilyFormal.StateChart
 import LazilyFormal.Reactive
+import LazilyFormal.ThreadSafe
 import LazilyFormal.Collection
 import LazilyFormal.Tree
 import LazilyFormal.AsyncSlotState
+import LazilyFormal.AsyncEffect
 import LazilyFormal.Reconciliation

@@ -11,12 +11,13 @@ state-chart conformance fixtures: a total, deterministic `send` whose type is
 itself the confluence proof that all bindings agree on *every* input, not just
 the tested ones. It also owns the formal models of the lazily reactive-signals
 data-structure family — `Slot`, `Cell`, `Signal`, `Effect`, `CellMap`,
-`CellFamily`, `CellTree` — that every binding implements.
+`CellFamily`, `CellTree`, the thread-safe batch context, and the async
+effect lifecycle — that every binding implements.
 
 ## Architecture
 
-Eight modules, layered primitive → flat kernels → full chart → reactive
-data-structure family → async lifecycle:
+Ten modules, layered primitive → flat kernels → full chart → reactive
+data-structure family → concurrency contexts → async lifecycle:
 
 - **`LazilyFormal/Primitive.lean`** — shared abstract types
   (`StateId`, `EventId`, `ActionId`, `GuardId`, `Configuration`, `GuardResolver`).
@@ -39,6 +40,13 @@ data-structure family → async lifecycle:
   eager-`Signal` materialization). The pure reactive core every binding's
   `Context` implements, and the layer whose changes surface on the IPC wire as
   `CellSet` / `SlotValue` / `Invalidate`.
+- **`LazilyFormal/ThreadSafe.lean`** — the thread-safe reactive context
+  (`lazily-spec` § "Concurrency layers are required"): a batch flush that
+  serializes concurrent cell writes into one coalesced invalidation pass. The
+  pure core of the thread-safe `batch` boundary; proves it *refines* the
+  single-threaded kernel (a one-write batch is identical to `setCell`), the
+  coalesced frontier (a dependent of any changed source is dirtied), and
+  glitch-freedom (a non-dependent branch is untouched).
 - **`LazilyFormal/Collection.lean`** — the keyed reactive collection
   (`CellMap` + `CellFamily`): independent value / set-membership / order
   signals and atomic identity-preserving move.
@@ -55,6 +63,16 @@ data-structure family → async lifecycle:
   § "Async slot state machine". Models the pure transition core with
   revision-tracked stale-completion discard. Concurrency properties (waiter
   cancellation, benign races) are out of scope per the spec (`async.md:236`).
+- **`LazilyFormal/AsyncEffect.lean`** — the async effect lifecycle
+  (`lazily-spec/docs/async.md` § "Async effects" + § "Batch support"). Models
+  the pure scheduling core of an async effect: cleanup-before-body
+  serialization (a body cannot start while a cleanup is pending), batch-boundary
+  scheduling (a dependency invalidation only ever *queues* a rerun, never starts
+  one inline; the body fires only on the executor / after the outermost batch
+  exits), and disposal (terminal, pending reruns removed). Covers async
+  conformance points 6, 7, and the disposal clause of point 3; the
+  concurrency-specific properties (waiter cancellation, benign races, compute-
+  context dependency tracking) are out of scope per the spec (`async.md:236`).
 
 ## Scope — what is modeled
 
@@ -157,6 +175,19 @@ hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent
   universal form of "a changed eager Signal emits `SlotValue`, never bare
   `Invalidate`, for its backing slot".
 
+**Thread-safe reactive context (`ThreadSafe`) — the lock-serialized batch boundary**
+- `flushBatch_empty` — an empty batch flush is the identity.
+- `flushBatch_singleton_eq_setCell` — a one-write batch is observationally
+  identical to the single-threaded `setCell`: the thread-safe context *refines*
+  the single-threaded kernel (concurrency changes neither value nor
+  invalidation of a single write).
+- `flushBatch_dependent_dirty` — the coalesced frontier: after a batch flush, a
+  dependent of *any* changed source is dirty (universal invalidation under
+  serialized concurrent writes).
+- `flushBatch_preserves_nondependent_dirty` — glitch-freedom: a node that is a
+  dependent of no changed source keeps the dirty flag the post-write graph gave
+  it (the flush never touches an unrelated branch).
+
 **Keyed collection (`Collection`) — `CellMap` / `CellFamily`**
 - `setEntryValue_preserves_{membership,order,siblings}` — updating one entry's
   value leaves the membership signal, the order signal, and every sibling's
@@ -204,6 +235,19 @@ hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent
 - `step_preserves_wellFormed` — after any transition the slot's fields remain
   consistent with its lifecycle state.
 
+**Async effect lifecycle (`AsyncEffect`) — cleanup-before-body + batch-boundary scheduling**
+- `fire_blocked_during_cleanup` — cleanup-before-body (conformance point 6): a
+  body rerun cannot start while a cleanup future is pending.
+- `invalidate_from_idle_schedules` / `invalidate_yields_pending_or_disposed` —
+  batch-boundary scheduling (conformance point 7): a dependency invalidation
+  only ever *queues* a rerun (`scheduled` / `cleanupRunningScheduled`), never
+  starts one inline; the body fires only on the executor.
+- `cleanupDone_resumes_deferred` — serialized resumption (conformance point 6):
+  when a cleanup completes and a rerun was queued during it, the deferred rerun
+  becomes runnable.
+- `dispose_absorbing` / `disposed_terminal` — disposal (conformance point 3):
+  `dispose` is absorbing and terminal; no event revives a disposed effect.
+
 ### By construction (not a theorem, but the strongest guarantee)
 
 - **Determinism** — `send` is a total function of
@@ -214,13 +258,37 @@ hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent
   (`cfg` / `history` / `actions`) that carries no replacement `Chart`; the chart
   definition simply cannot be mutated by a step.
 
+## lazily-spec compliance coverage
+
+`lazily-spec`'s Binding Conformance Matrix splits into **wire** layers (owned
+by `lazily-spec`'s own Lean model: IPC Snapshot/Delta, C-ABI FFI, CRDT,
+permission, capability negotiation, shared-memory payload) and **compute**
+layers (owned here). Every compute layer that has a pure-machine core is
+modeled:
+
+| lazily-spec compute layer (`MUST`) | lazily-formal module | Status |
+|-------------------------------------|----------------------|--------|
+| Reactive core (Cell / Slot / Effect / Signal) | `Reactive.lean` | modeled |
+| Keyed cell collections (`CellMap`/`CellTree`, reconciliation) | `Collection.lean`, `Tree.lean`, `Reconciliation.lean` | modeled |
+| Flat state machine | `StateMachine.lean` | modeled |
+| Harel state charts | `StateChart.lean` | modeled |
+| Thread-safe reactive context (`MUST²`, platform-conditional) | `ThreadSafe.lean` | modeled |
+| Async reactive context (`MUST²`, platform-conditional) | `AsyncSlotState.lean` (slot state machine, points 1–2) + `AsyncEffect.lean` (effect serialization, batch-boundary scheduling, disposal; points 3-disposal, 6, 7) | modeled |
+
+The async concurrency-specific properties — waiter cancellation (point 3's
+waiter clause), the two benign `get_async` races (point 4), and compute-context
+dependency registration across `.await` (point 5) — are, per `async.md:236`,
+pinned by targeted deterministic tests at the binding level, not by a pure
+total-function model (they are properties of real-executor interleavings a
+synchronization-model checker cannot shim).
+
 ## Role vs. lazily-spec and the bindings
 
 `lazily-formal` is the **formal** layer; `lazily-spec` is the **wire** layer.
 
 | Repo | Owns |
 |------|------|
-| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Slot/Cell/Signal/Effect) + keyed collection (CellMap/CellFamily) + ordered tree (CellTree); universal proofs |
+| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Slot/Cell/Signal/Effect) + thread-safe batch context + keyed collection (CellMap/CellFamily) + ordered tree (CellTree) + async slot state + async effect lifecycle; universal proofs |
 | `lazily-spec` | wire protocol + JSON schemas + IPC/CRDT Lean proofs + conformance fixtures (incl. `conformance/statechart/`) |
 | `lazily-rs` / `lazily-py` / `lazily-zig` / `lazily-kt` / `lazily-js` / `lazily-dart` | native implementations; replay the shared conformance fixtures |
 

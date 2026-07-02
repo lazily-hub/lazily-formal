@@ -38,6 +38,14 @@ the neutral home formal artifacts every binding depends on equally.
   `recomputeSlot_different_invalidates_dependents`,
   `signal_materialized_after_recompute` (a Signal always has a materialized
   value after its puller runs).
+- `LazilyFormal/ThreadSafe.lean` — thread-safe reactive context
+  (`lazily-spec/protocol.md` § "Concurrency layers are required"): a batch
+  flush that serializes concurrent cell writes into one coalesced invalidation
+  pass. The pure core of the thread-safe `batch` boundary; the
+  lock/`Send + Sync` mechanics are language-level and have no pure encoding.
+  Theorems: `flushBatch_empty`, `flushBatch_singleton_eq_setCell` (refines the
+  single-threaded kernel), `flushBatch_dependent_dirty` (coalesced frontier),
+  `flushBatch_preserves_nondependent_dirty` (glitch-freedom).
 - `LazilyFormal/Collection.lean` — keyed reactive collection (`CellMap` +
   `CellFamily`): independent value/membership/order signals, atomic move.
   Theorems: `setEntryValue_preserves_{membership,order,siblings}`,
@@ -69,6 +77,17 @@ the neutral home formal artifacts every binding depends on equally.
   (a current completion publishes), `step_preserves_wellFormed`. Concurrency
   properties (waiter cancellation, benign races) are out of scope per the spec
   (`async.md:236`).
+- `LazilyFormal/AsyncEffect.lean` — the async effect lifecycle
+  (`lazily-spec/docs/async.md` § "Async effects" + § "Batch support"). Models
+  the pure scheduling core of an async effect. Theorems:
+  `fire_blocked_during_cleanup` (cleanup-before-body, conformance point 6),
+  `invalidate_from_idle_schedules` / `invalidate_yields_pending_or_disposed`
+  (batch-boundary scheduling — invalidation only queues, never runs inline;
+  conformance point 7), `cleanupDone_resumes_deferred` (serialized resumption,
+  point 6), `dispose_absorbing` / `disposed_terminal` (disposal, point 3).
+  Covers async conformance points 3-disposal, 6, 7; the concurrency-specific
+  properties (waiter cancellation, benign races, compute-context dependency
+  tracking) are out of scope per the spec (`async.md:236`).
 
 `send` is a total function, so confluence/determinism is by construction — the
 universal guarantee every binding inherits by replaying the shared conformance
