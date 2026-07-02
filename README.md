@@ -9,11 +9,14 @@ buried in `lazily-spec` (a wire-protocol repo).
 This repo owns the executable reference *behind* the cross-language
 state-chart conformance fixtures: a total, deterministic `send` whose type is
 itself the confluence proof that all bindings agree on *every* input, not just
-the tested ones.
+the tested ones. It also owns the formal models of the lazily reactive-signals
+data-structure family — `Slot`, `Cell`, `Signal`, `Effect`, `CellMap`,
+`CellFamily`, `CellTree` — that every binding implements.
 
 ## Architecture
 
-Three modules, layered primitive → flat kernel → full chart:
+Six modules, layered primitive → flat kernels → full chart → reactive
+data-structure family:
 
 - **`LazilyFormal/Primitive.lean`** — shared abstract types
   (`StateId`, `EventId`, `ActionId`, `GuardId`, `Configuration`, `GuardResolver`).
@@ -30,6 +33,23 @@ Three modules, layered primitive → flat kernel → full chart:
   `Chart` + `WellFormed`, `History`, `StepResult`; transition selection
   (`enabled`, conflict resolution via disjoint exit sets), LCA exit/enter sets,
   descent, history record-on-exit / restore-on-enter, and `send`.
+- **`LazilyFormal/Reactive.lean`** — the flat reactive graph kernel: the
+  `Slot -> Cell -> Signal -> Effect` family (node kinds, reverse subscription
+  edges, the `PartialEq` cell-write guard, the memo-equality suppression guard,
+  eager-`Signal` materialization). The pure reactive core every binding's
+  `Context` implements, and the layer whose changes surface on the IPC wire as
+  `CellSet` / `SlotValue` / `Invalidate`.
+- **`LazilyFormal/Collection.lean`** — the keyed reactive collection
+  (`CellMap` + `CellFamily`): independent value / set-membership / order
+  signals and atomic identity-preserving move.
+- **`LazilyFormal/Tree.lean`** — the ordered keyed reactive tree (`CellTree`):
+  per-node value reactivity, per-level membership/order reactivity, atomic-move
+  identity preservation.
+- **`LazilyFormal/Reconciliation.lean`** — keyed reconciliation (`cell-model.md`
+  § "Keyed reconciliation"): the move-minimized `{insert, remove, move, update}`
+  op set a level diff emits by stable key, built on a longest-increasing-
+  subsequence (LIS) kernel. The executable reference behind
+  `lazily-spec/conformance/collections/keyed_reconciliation_lis.json`.
 
 ## Scope — what is modeled
 
@@ -94,7 +114,11 @@ inside `states`).
   the enabled *set*, not its order. Invariant under any reordering of `enabled`.
   Backed by the order-free membership lemmas `mem_zip_fst`, `zip_map_eq`,
   `filter_notContains_mem`, `applyTakenCfg_mem_iff`, `perm_flatMap_mem`, and
-  `send_cfg_eq_applyTakenCfg_take`.
+  `send_cfg_eq_applyTakenCfg_take`. The LCA is region-scoped via `sourceLeaf`
+  (which resolves the active leaf in the transition source's own region), so the
+  pairwise-disjoint hypothesis is genuinely satisfiable by real orthogonal
+  regions and the resulting exit sets never span a sibling region — matching
+  `lazily-spec`'s "sibling regions are untouched" invariant.
 
 **Single-region refinement (`StateChart`)**
 - `single_region_enabled_at_most_one` — with one active leaf, at most one
@@ -113,6 +137,58 @@ inside `states`).
 hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent`
 (reject case needs no `Coherent`).
 
+**Reactive graph kernel (`Reactive`) — the `Slot / Cell / Signal / Effect` family**
+- `setCell_equal_preserves_graph` — the `PartialEq` cell-write guard: an equal
+  write leaves the whole graph byte-identical (universal form of the wire
+  invariant "equal `set_cell` emits no `CellSet` and no downstream ops").
+- `setCell_different_invalidates_dependents` — a strictly-different write marks
+  every direct dependent dirty.
+- `recomputeSlot_equal_preserves_dependents` — memo-equality suppression: a slot
+  that recomputes to an equal value leaves its downstream dependents untouched.
+- `recomputeSlot_different_invalidates_dependents` — a strictly-different
+  recompute marks every direct dependent dirty.
+- `signal_materialized_after_recompute` — an eager `Signal`'s backing slot is
+  always materialized (concrete value, not dirty) after its puller runs; the
+  universal form of "a changed eager Signal emits `SlotValue`, never bare
+  `Invalidate`, for its backing slot".
+
+**Keyed collection (`Collection`) — `CellMap` / `CellFamily`**
+- `setEntryValue_preserves_{membership,order,siblings}` — updating one entry's
+  value leaves the membership signal, the order signal, and every sibling's
+  value cell untouched.
+- `moveKey_preserves_{membership,values}` / `moveKey_advances_order` — a pure
+  reorder (`move_to`) leaves set-membership and every value cell untouched and
+  bumps only the order signal once: the wire invariant "a pure reorder MUST NOT
+  invalidate set-membership readers".
+- `addKey_advances_membership_and_order` — adding a key bumps both signals.
+- `Family.get_idempotent_after_first` — the same key resolves to the same cell
+  handle on every request (per-key identity stability across the factory).
+
+**Ordered keyed tree (`Tree`) — `CellTree`**
+- `setNodeValue_preserves_other_nodes` / `setNodeValue_preserves_node_signals` —
+  per-node value reactivity: editing one node's value leaves every other node,
+  and the edited node's own child collection / per-level signals, untouched.
+- `moveChild_preserves_non_parent` / `moveChild_preserves_parent_value` —
+  per-level reactivity: a sibling-subtree change does not disturb an unrelated
+  level, and an atomic move keeps the child's cell identity and value.
+- `moveChild_advances_order_signal_only` — an atomic move bumps the parent's
+  per-level order signal by exactly one and leaves its membership signal
+  unchanged.
+
+**Keyed reconciliation (`Reconciliation`) — LIS move-minimized level diff**
+- `lisBy_longest` — the chosen LIS is genuinely longest: every increasing
+  subsequence of the input is no longer, so the emitted `move` set is minimal
+  (`cell-model.md` move-minimized clause).
+- `reconcile_move_minimized` — a stable (LIS) key is never moved: only the
+  non-LIS common keys emit `move` (`cell-model.md:238`).
+- `reconcile_stable_not_invalidated` — a stable entry (unchanged value, in the
+  LIS) is neither moved nor updated, so its value cell is untouched by the
+  reconcile (`cell-model.md:239`). Combined with `Collection`'s
+  `moveKey_preserves_values` / `setEntryValue_preserves_siblings`, a stable
+  entry's value cell is provably not invalidated by a sibling reorder — the
+  universal form of the `keyed_reconciliation_lis.json`
+  `stable_keys_not_invalidated` expectation.
+
 ### By construction (not a theorem, but the strongest guarantee)
 
 - **Determinism** — `send` is a total function of
@@ -129,7 +205,7 @@ hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent
 
 | Repo | Owns |
 |------|------|
-| `lazily-formal` (this) | formal models: flat kernel + full Harel chart; universal proofs |
+| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Slot/Cell/Signal/Effect) + keyed collection (CellMap/CellFamily) + ordered tree (CellTree); universal proofs |
 | `lazily-spec` | wire protocol + JSON schemas + IPC/CRDT Lean proofs + conformance fixtures (incl. `conformance/statechart/`) |
 | `lazily-rs` / `lazily-py` / `lazily-zig` / `lazily-kt` / `lazily-js` / `lazily-dart` | native implementations; replay the shared conformance fixtures |
 

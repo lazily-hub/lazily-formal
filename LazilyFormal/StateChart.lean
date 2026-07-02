@@ -578,11 +578,26 @@ def stepActions (c : Chart) (exiting : List StateId) (taken : List (StateId × T
 
 -- ------------------------------------------------------------------------- send
 
+/-- The active leaf in `src`'s region: the first active leaf that is a descendant
+of `src` (or `src` itself if it is an active leaf). A transition sourced from
+`src` was discovered by walking up from exactly this leaf, so it is the leaf
+`lazily-spec/docs/state-charts.md` means by "the active leaf in `s`'s region".
+Falls back to `src` when no matching leaf is found (degenerate / ill-formed input).
+
+Using this instead of `(activeLeaves c cfg).head!` keeps the LCA inside the
+sourcing region for parallel charts: `head!` could pick a leaf from a sibling
+region and span the parallel parent, exiting untouched regions — violating the
+spec's "sibling regions are untouched" invariant. -/
+def sourceLeaf (c : Chart) (cfg : Configuration) (src : StateId) : StateId :=
+  match (activeLeaves c cfg).find? (fun l => isAncestorIncl c src l) with
+  | some l => l
+  | none => src
+
 /-- The LCA used by a transition: the source itself for an internal-to-source
-transition, else the LCA of the active leaf and the target. -/
+transition, else the LCA of the source region's active leaf and the target. -/
 def lcaOf (c : Chart) (cfg : Configuration) (st : StateId × Transition) : StateId :=
   if st.2.internal && (st.2.target = st.1 ∨ isProperDescendant c st.2.target st.1)
-  then st.1 else lca c (activeLeaves c cfg).head! st.2.target
+  then st.1 else lca c (sourceLeaf c cfg st.1) st.2.target
 
 /-- Conflict-resolving fold step: drop `st` if its exit set intersects the prior
 taken exit sets, else append it. -/
@@ -1262,7 +1277,7 @@ theorem Chart.Coherent.leaf_resolved (c : Chart) (coh : c.Coherent)
     (hef : enabledForLeaf c g ev leaf = some (src, t))
     (hleafCfg : leaf ∈ cfg) (hleafIsLeaf : isLeaf c leaf = true)
     (hleafStates : leaf ∈ c.states) (htgtStates : t.target ∈ c.states)
-    (hheadLeaf : (activeLeaves c cfg).head! = leaf) :
+    (hsl : sourceLeaf c cfg src = leaf) :
     leaf ∈ exitSet c cfg (lcaOf c cfg (src, t)) ∨ defaultLeaf c t.target = leaf := by
   have hsrcAnc : src ∈ ancestors c leaf :=
     enabledForLeaf_source_mem_ancestors c g ev leaf src t hef
@@ -1270,7 +1285,7 @@ theorem Chart.Coherent.leaf_resolved (c : Chart) (coh : c.Coherent)
     (coh.leaf_iff_noDesc leaf).mp hleafIsLeaf
   have hrootLeaf : (root c) ∈ ancestors c leaf := coh.root_commonAncestor leaf hleafStates
   have hdef : defaultLeaf c leaf = leaf := defaultLeaf_of_leaf c leaf hleafIsLeaf
-  simp only [lcaOf, hheadLeaf]
+  simp only [lcaOf, hsl]
   split
   next hcond =>
     have ⟨_, hdec⟩ := Bool.and_eq_true_iff.mp hcond
@@ -1343,7 +1358,6 @@ theorem single_region_refines_flat_machine
           x = (LazilyFormal.StateMachine.send (flatMachine c leaf g) ev).current := by
   intro x
   have hleafIsLeaf : isLeaf c leaf = true := activeLeaf_isLeaf c cfg leaf oneLeaf
-  have hheadLeaf : (activeLeaves c cfg).head! = leaf := by rw [oneLeaf]; rfl
   cases hef : enabledForLeaf c g ev leaf with
   | none =>
     have hen : enabled c cfg g ev = [] := by
@@ -1363,8 +1377,15 @@ theorem single_region_refines_flat_machine
     have hleafCfg : leaf ∈ cfg :=
       activeLeaves_in_cfg c cfg leaf (by rw [oneLeaf]; exact List.mem_cons_self)
     have hleafStates : leaf ∈ c.states := cfg_in leaf hleafCfg
+    have hsl : sourceLeaf c cfg st.1 = leaf := by
+      have hanc : isAncestorIncl c st.1 leaf = true :=
+        isAncestorIncl_mem c st.1 leaf
+          (enabledForLeaf_source_mem_ancestors c g ev leaf st.1 st.2 hef)
+      show (match (activeLeaves c cfg).find? (fun l => isAncestorIncl c st.1 l) with
+        | some l => l | none => st.1) = leaf
+      rw [oneLeaf, List.find?_cons, hanc]
     have hleaf_res := Chart.Coherent.leaf_resolved c coh cfg g ev leaf st.1 st.2 hef
-      hleafCfg hleafIsLeaf hleafStates htgt_in hheadLeaf
+      hleafCfg hleafIsLeaf hleafStates htgt_in hsl
     have hmemiff : x ∈ applyTakenCfg c cfg h [st] ↔
         (x ∈ cfg ∧ x ∉ transExitSet c cfg st) ∨ x ∈ transEnterSet c cfg h st := by
       have key := applyTakenCfg_mem_iff c cfg h [st] x
