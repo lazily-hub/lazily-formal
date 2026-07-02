@@ -15,8 +15,8 @@ data-structure family — `Slot`, `Cell`, `Signal`, `Effect`, `CellMap`,
 
 ## Architecture
 
-Six modules, layered primitive → flat kernels → full chart → reactive
-data-structure family:
+Eight modules, layered primitive → flat kernels → full chart → reactive
+data-structure family → async lifecycle:
 
 - **`LazilyFormal/Primitive.lean`** — shared abstract types
   (`StateId`, `EventId`, `ActionId`, `GuardId`, `Configuration`, `GuardResolver`).
@@ -50,6 +50,11 @@ data-structure family:
   op set a level diff emits by stable key, built on a longest-increasing-
   subsequence (LIS) kernel. The executable reference behind
   `lazily-spec/conformance/collections/keyed_reconciliation_lis.json`.
+- **`LazilyFormal/AsyncSlotState.lean`** — the async slot state machine
+  (`Empty / Computing / Resolved / Error`) from `lazily-spec/docs/async.md`
+  § "Async slot state machine". Models the pure transition core with
+  revision-tracked stale-completion discard. Concurrency properties (waiter
+  cancellation, benign races) are out of scope per the spec (`async.md:236`).
 
 ## Scope — what is modeled
 
@@ -188,6 +193,16 @@ hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent
   entry's value cell is provably not invalidated by a sibling reorder — the
   universal form of the `keyed_reconciliation_lis.json`
   `stable_keys_not_invalidated` expectation.
+
+**Async slot state (`AsyncSlotState`) — the `Empty / Computing / Resolved / Error` lifecycle**
+- `stale_completeOk_discarded` / `stale_completeErr_discarded` — a stale
+  completion (revision mismatch) leaves the slot byte-identical: the universal
+  form of conformance point 2 (`async.md:218`), "Revision tracking discards
+  every stale completion; a stale value is never published."
+- `current_completeOk_publishes` / `current_completeErr_to_error` — a current
+  completion (revision matches) publishes the value / transitions to Error.
+- `step_preserves_wellFormed` — after any transition the slot's fields remain
+  consistent with its lifecycle state.
 
 ### By construction (not a theorem, but the strongest guarantee)
 
