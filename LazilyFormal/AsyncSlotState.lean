@@ -123,8 +123,7 @@ published." -/
 theorem stale_completeOk_discarded (s : AsyncSlot) (r : Revision) (v : Value)
     (hstale : some r ≠ s.computeRev) :
     step s (SlotEvent.completeOk r v) = s := by
-  simp only [step]
-  cases h : s.state <;> simp only [h]
+  cases h : s.state <;> simp only [step, h]
   case computing =>
     split <;> (try rfl)
     next hacc => exact absurd hacc hstale
@@ -133,8 +132,7 @@ theorem stale_completeOk_discarded (s : AsyncSlot) (r : Revision) (v : Value)
 theorem stale_completeErr_discarded (s : AsyncSlot) (r : Revision)
     (hstale : some r ≠ s.computeRev) :
     step s (SlotEvent.completeErr r) = s := by
-  simp only [step]
-  cases h : s.state <;> simp only [h]
+  cases h : s.state <;> simp only [step, h]
   case computing =>
     split <;> (try rfl)
     next hacc => exact absurd hacc hstale
@@ -169,9 +167,9 @@ theorem current_completeErr_to_error (s : AsyncSlot) (r : Revision)
 remain consistent with its lifecycle state. -/
 theorem step_preserves_wellFormed (s : AsyncSlot) (e : SlotEvent)
     (wf : s.WellFormed) : (step s e).WellFormed := by
-  cases e <;> simp only [step]
+  cases e
   all_goals cases h : s.state
-  all_goals try simp only [h]
+  all_goals simp only [step, h]
   all_goals try split
   all_goals simp only [AsyncSlot.WellFormed] at *
   all_goals first | exact wf | simp_all
