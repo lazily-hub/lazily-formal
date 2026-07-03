@@ -9,3 +9,4 @@ import LazilyFormal.Tree
 import LazilyFormal.AsyncSlotState
 import LazilyFormal.AsyncEffect
 import LazilyFormal.Reconciliation
+import LazilyFormal.TextCrdtSync
