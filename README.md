@@ -35,6 +35,7 @@ The full `lazily` capability set and its cross-language coverage (`lazily-rs`,
 | State projection / mirror | ✅ | ✅ | ✅ |
 | FFI boundary | ✅ | ✅ | n/a |
 | Distributed plane (WebRTC transport + signaling) | ✅ | — | — |
+| Causal receipts (`observed` / `accepted` non-terminal, `applied` / `rejected` terminal) | ✅ | ✅ | ✅ |
 | Instrumentation / benchmarks | ✅ | — | — |
 
 CRDT convergence and the wire protocol are pinned by the shared conformance fixtures
@@ -133,6 +134,11 @@ signaling:
   conformance points 6, 7, and the disposal clause of point 3; the
   concurrency-specific properties (waiter cancellation, benign races, compute-
   context dependency tracking) are out of scope per the spec (`async.md:236`).
+- **`LazilyFormal/Receipt.lean`** — the causal receipt projection
+  (`lazily-spec/protocol.md` § "Causal Receipts"): duplicate receipt ids are
+  idempotent, stale generations are discarded, `observed` / `accepted` are
+  non-terminal, `applied` / `rejected` are terminal, and distinct terminal
+  outcomes conflict rather than being auto-resolved.
 
 ## Scope — what is modeled
 
@@ -308,6 +314,16 @@ hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent
 - `dispose_absorbing` / `disposed_terminal` — disposal (conformance point 3):
   `dispose` is absorbing and terminal; no event revives a disposed effect.
 
+**Causal receipt projection (`Receipt`) — command/effect outcomes**
+- `observed_nonterminal` / `accepted_nonterminal` — ACK-like observations are not
+  terminal authority.
+- `applied_terminal` / `rejected_terminal` — applied/rejected complete a
+  causation.
+- `duplicate_receipt_noop` — duplicate receipt ids are idempotent no-ops.
+- `stale_generation_discarded` — receipts outside the current generation cannot
+  affect the current projection.
+- `distinct_terminal_conflicts` — conflicting terminal outcomes fail closed.
+
 ### By construction (not a theorem, but the strongest guarantee)
 
 - **Determinism** — `send` is a total function of
@@ -340,6 +356,7 @@ of the element set. Every compute layer that has a pure-machine core is modeled:
 | Harel state charts | `StateChart.lean` | modeled |
 | Thread-safe reactive context (`MUST²`, platform-conditional) | `ThreadSafe.lean` | modeled |
 | Async reactive context (`MUST²`, platform-conditional) | `AsyncSlotState.lean` (slot state machine, points 1–2) + `AsyncEffect.lean` (effect serialization, batch-boundary scheduling, disposal; points 3-disposal, 6, 7) | modeled |
+| Causal receipts (`MUST`) | `Receipt.lean` | modeled |
 
 The async concurrency-specific properties — waiter cancellation (point 3's
 waiter clause), the two benign `get_async` races (point 4), and compute-context
@@ -354,7 +371,7 @@ synchronization-model checker cannot shim).
 
 | Repo | Owns |
 |------|------|
-| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Slot/Cell/Signal/Effect) + thread-safe batch context + keyed collection (CellMap/CellFamily) + ordered tree (CellTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle; universal proofs |
+| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Slot/Cell/Signal/Effect) + thread-safe batch context + keyed collection (CellMap/CellFamily) + ordered tree (CellTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle + causal receipt projection; universal proofs |
 | `lazily-spec` | wire protocol + JSON schemas + IPC/CRDT Lean proofs + conformance fixtures (incl. `conformance/statechart/`) |
 | `lazily-rs` / `lazily-py` / `lazily-zig` / `lazily-kt` / `lazily-js` / `lazily-dart` | native implementations; replay the shared conformance fixtures |
 

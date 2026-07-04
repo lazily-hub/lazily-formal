@@ -16,3 +16,4 @@ import LazilyFormal.TextCrdtSync
 import LazilyFormal.SeqCrdt
 import LazilyFormal.Signaling
 import LazilyFormal.SignalingRoster
+import LazilyFormal.Receipt
