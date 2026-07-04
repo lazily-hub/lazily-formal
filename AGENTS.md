@@ -67,6 +67,43 @@ the neutral home formal artifacts every binding depends on equally.
   (a stable entry with unchanged value is neither moved nor updated → its value
   cell is untouched). The executable reference behind
   `lazily-spec/conformance/collections/keyed_reconciliation_lis.json`.
+- `LazilyFormal/SemTree.lean` — the memoized semantic tree
+  (`lazily-spec/cell-model.md` § "Memoized semantic tree"): one memo slot per
+  node folds `(weighted node value, child derived values)`, parameterised by the
+  per-value weight so one model covers `sum` and `count_positive`. Theorems:
+  `derivedForest_replace` / `parent_memo_guard` (equal folded result ⇒ ancestors
+  unchanged, the tree-level memo-equality guard), `setVal_miss` /
+  `derived_setVal_miss` (an edit that misses a subtree leaves it — and its memo
+  slot — untouched, sibling cache), `derivedForest_remove` / `remove_child_updates`
+  (removal drops exactly the removed subtree's fold). Backs
+  `lazily-spec/conformance/collections/semtree_incremental.json`.
+- `LazilyFormal/StableId.lean` — manufactured identity for text
+  (`lazily-spec/cell-model.md` § "Manufactured identity for text"): the `a:`
+  (anchored) and `c:` (content) keyspaces as distinct `Key` constructors.
+  Theorems: `keyspaces_disjoint` / `anchored_content_never_collide` (a:/c: never
+  collide), `anchored_survives_rewrite` (anchored key survives a full body
+  rewrite), `content_key_eq_iff` / `content_key_changes_on_edit` (content key
+  survives reflow, changes on edit), `lcs_self` / `classify_self` (word-LCS
+  similarity ≥ 0.5 ⇒ `Edited`/key-inherited, else `Inserted`). Backs
+  `lazily-spec/conformance/collections/stableid_alignment.json`.
+- `LazilyFormal/TextCrdt.lean` — the base Fugue/RGA character CRDT
+  (`lazily-spec/cell-model.md` § "Free-text CRDT + re-parse"): presence + sticky
+  tombstone as a pointwise join-semilattice (complements `TextCrdtSync`, which
+  proves the delta-sync lattice). Theorems: `merge_comm` / `merge_assoc` /
+  `merge_idem` (state convergence), `concurrent_inserts_both_present` (no
+  same-point insert lost), `precedes_total` / `precedes_asymm` (the descending-
+  `OpId` sibling comparator is a strict total order ⇒ order is a deterministic
+  function of the live set). Backs
+  `lazily-spec/conformance/collections/textcrdt_convergence.json`.
+- `LazilyFormal/SeqCrdt.lean` — the move-aware sequence CRDT
+  (`lazily-spec/cell-model.md` § "Move-aware sequence order"): each element three
+  independent LWW registers (value / position / deleted), a move a single LWW
+  position reassignment. Theorems: `joinReg_{comm,assoc,idem}` (the register join
+  is a semilattice), `merge_{comm,assoc,idem}` (state convergence),
+  `concurrent_move_lww` (concurrent moves converge to the later stamp, no
+  duplication), `concurrent_move_and_value` (a concurrent move + value edit both
+  apply — independent registers), `remove_lww` (LWW tombstone). Backs
+  `lazily-spec/conformance/collections/seqcrdt_convergence.json`.
 - `LazilyFormal/AsyncSlotState.lean` — the async slot state machine
   (`Empty / Computing / Resolved / Error`) from
   `lazily-spec/docs/async.md` § "Async slot state machine". Models the pure
@@ -98,9 +135,14 @@ fixtures in `lazily-spec/conformance/statechart/`.
 This is the **formal** layer; `lazily-spec` is the **wire** layer. lazily-formal
 owns primitive types + the flat kernel + the full Harel chart + the reactive
 graph kernel (Slot/Cell/Signal/Effect) + the keyed collection (CellMap/CellFamily)
-+ the ordered tree (CellTree); lazily-spec owns the wire protocol + its Lean
-proofs + the conformance fixtures. lazily-formal is the executable reference
-behind the fixtures, not a wire artifact.
++ the ordered tree (CellTree) + the memoized semantic tree (SemTree) + manufactured
+identity (StableId) + the collection-level CRDTs (TextCrdt base + delta sync,
+SeqCrdt) + distributed signaling (peer FSM + roster); every
+`lazily-spec/conformance/collections/*.json` fixture now has an executable
+reference here. lazily-spec owns the wire protocol (IPC Snapshot/Delta, the
+register/`PnCounter`/`CellCrdt` + `CrdtSync` layer, FFI, permission, capability
+negotiation) + its own Lean proofs + the conformance fixtures. lazily-formal is
+the executable reference behind the fixtures, not a wire artifact.
 
 ## Commands
 

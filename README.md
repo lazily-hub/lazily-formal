@@ -41,8 +41,9 @@ CRDT convergence and the wire protocol are pinned by the shared conformance fixt
 and JSON Schemas in `lazily-spec` and the Lean models in `lazily-formal`.
 ## Architecture
 
-Ten modules, layered primitive → flat kernels → full chart → reactive
-data-structure family → concurrency contexts → async lifecycle:
+Layered primitive → flat kernels → full chart → reactive data-structure family
+→ collection-level CRDTs → concurrency contexts → async lifecycle → distributed
+signaling:
 
 - **`LazilyFormal/Primitive.lean`** — shared abstract types
   (`StateId`, `EventId`, `ActionId`, `GuardId`, `Configuration`, `GuardResolver`).
@@ -83,6 +84,40 @@ data-structure family → concurrency contexts → async lifecycle:
   op set a level diff emits by stable key, built on a longest-increasing-
   subsequence (LIS) kernel. The executable reference behind
   `lazily-spec/conformance/collections/keyed_reconciliation_lis.json`.
+- **`LazilyFormal/SemTree.lean`** — the memoized semantic tree (`cell-model.md`
+  § "Memoized semantic tree"): one memo slot per node folding
+  `(weighted node value, child derived values)`, parameterised by the per-value
+  weight so one model covers both `sum` and `count_positive`. Proves the
+  incremental / glitch-free guarantees — a sibling subtree stays cached when an
+  edit misses it (`setVal_miss`), and an edit that preserves a subtree's folded
+  result leaves every ancestor's fold unchanged (`parent_memo_guard`) — plus that
+  removal drops exactly the removed subtree's fold. The executable reference
+  behind `lazily-spec/conformance/collections/semtree_incremental.json`.
+- **`LazilyFormal/StableId.lean`** — manufactured identity for text
+  (`cell-model.md` § "Manufactured identity for text"): the `a:` (anchored) and
+  `c:` (content) keyspaces as distinct `Key` constructors — disjoint by
+  construction (`keyspaces_disjoint`) — an anchored key surviving a full body
+  rewrite, a content key surviving reflow but changing on edit
+  (`content_key_eq_iff`), and word-LCS similarity alignment classifying an
+  `Edited` block (key inherited, ratio `≥ 0.5`) apart from a genuine `Inserted`
+  one (`lcs_self`, `classify_self`). The executable reference behind
+  `lazily-spec/conformance/collections/stableid_alignment.json`.
+- **`LazilyFormal/TextCrdt.lean`** — the base Fugue/RGA character CRDT
+  (`cell-model.md` § "Free-text CRDT + re-parse"): presence + sticky tombstone as
+  a pointwise join-semilattice (merge commutative / associative / idempotent), no
+  concurrent same-point insert lost (`concurrent_inserts_both_present`), and the
+  sibling comparator (descending `OpId`) a strict total order so order is a
+  deterministic function of the live set (`precedes_total`). Complements
+  `TextCrdtSync` (which proves the delta-sync lattice); backs
+  `lazily-spec/conformance/collections/textcrdt_convergence.json`.
+- **`LazilyFormal/SeqCrdt.lean`** — the move-aware sequence CRDT (`cell-model.md`
+  § "Move-aware sequence order"): each element three independent LWW registers
+  (value / position / deleted), a move a *single* LWW position reassignment.
+  Proves the register join is a semilattice, merge is commutative / associative /
+  idempotent, concurrent moves converge to the later stamp with no duplication
+  (`concurrent_move_lww`), and a concurrent move + value edit both apply because
+  the registers are independent (`concurrent_move_and_value`). The executable
+  reference behind `lazily-spec/conformance/collections/seqcrdt_convergence.json`.
 - **`LazilyFormal/AsyncSlotState.lean`** — the async slot state machine
   (`Empty / Computing / Resolved / Error`) from `lazily-spec/docs/async.md`
   § "Async slot state machine". Models the pure transition core with
@@ -286,15 +321,21 @@ hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent
 ## lazily-spec compliance coverage
 
 `lazily-spec`'s Binding Conformance Matrix splits into **wire** layers (owned
-by `lazily-spec`'s own Lean model: IPC Snapshot/Delta, C-ABI FFI, CRDT,
-permission, capability negotiation, shared-memory payload) and **compute**
-layers (owned here). Every compute layer that has a pure-machine core is
-modeled:
+by `lazily-spec`'s own Lean model: IPC Snapshot/Delta, C-ABI FFI, the register /
+`PnCounter` / `CellCrdt` + IPC `CrdtSync` layer, permission, capability
+negotiation, shared-memory payload) and **compute** layers (owned here) —
+including the collection-level text/sequence CRDTs whose order is a pure function
+of the element set. Every compute layer that has a pure-machine core is modeled:
 
 | lazily-spec compute layer (`MUST`) | lazily-formal module | Status |
 |-------------------------------------|----------------------|--------|
 | Reactive core (Cell / Slot / Effect / Signal) | `Reactive.lean` | modeled |
 | Keyed cell collections (`CellMap`/`CellTree`, reconciliation) | `Collection.lean`, `Tree.lean`, `Reconciliation.lean` | modeled |
+| Memoized semantic tree (`SemTree`) | `SemTree.lean` | modeled |
+| Manufactured identity / stable-id alignment | `StableId.lean` | modeled |
+| Free-text character CRDT (`TextCrdt`, base convergence + delta sync) | `TextCrdt.lean`, `TextCrdtSync.lean` | modeled |
+| Move-aware sequence CRDT (`SeqCrdt`) | `SeqCrdt.lean` | modeled |
+| Distributed signaling (peer-connection FSM + roster) | `Signaling.lean`, `SignalingRoster.lean` | modeled |
 | Flat state machine | `StateMachine.lean` | modeled |
 | Harel state charts | `StateChart.lean` | modeled |
 | Thread-safe reactive context (`MUST²`, platform-conditional) | `ThreadSafe.lean` | modeled |
@@ -313,7 +354,7 @@ synchronization-model checker cannot shim).
 
 | Repo | Owns |
 |------|------|
-| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Slot/Cell/Signal/Effect) + thread-safe batch context + keyed collection (CellMap/CellFamily) + ordered tree (CellTree) + async slot state + async effect lifecycle; universal proofs |
+| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Slot/Cell/Signal/Effect) + thread-safe batch context + keyed collection (CellMap/CellFamily) + ordered tree (CellTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle; universal proofs |
 | `lazily-spec` | wire protocol + JSON schemas + IPC/CRDT Lean proofs + conformance fixtures (incl. `conformance/statechart/`) |
 | `lazily-rs` / `lazily-py` / `lazily-zig` / `lazily-kt` / `lazily-js` / `lazily-dart` | native implementations; replay the shared conformance fixtures |
 
