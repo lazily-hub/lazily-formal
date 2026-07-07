@@ -14,6 +14,8 @@ import LazilyFormal.StableId
 import LazilyFormal.TextCrdt
 import LazilyFormal.TextCrdtSync
 import LazilyFormal.SeqCrdt
+import LazilyFormal.LosslessTree
+import LazilyFormal.LosslessTreeSync
 import LazilyFormal.Signaling
 import LazilyFormal.SignalingRoster
 import LazilyFormal.Receipt
