@@ -136,6 +136,23 @@ this repo.
   Covers async conformance points 3-disposal, 6, 7; the concurrency-specific
   properties (waiter cancellation, benign races, compute-context dependency
   tracking) are out of scope per the spec (`async.md:236`).
+- `LazilyFormal/QueueCell.lean` — the reactive queue (`QueueCell`) from
+  `lazily-spec/cell-model.md` § "Reactive queues": a FIFO reactive collection
+  whose shell invalidates by reader kind (head/len/is_empty/closed). Theorems:
+  `close_preserves_{elements,head,length}` (close is orthogonal to queue state),
+  `close_idempotent` (close is a no-op on closed), `push_preserves_closed` /
+  `pop_preserves_closed` (neither push nor pop changes the closed flag),
+  `push_after_close_rejected` (push on closed is a no-op), `push_nonempty_preserves_head`
+  (push to non-empty does NOT invalidate head readers — the core reader-kind
+  independence law), `pop_returns_oldest` (total-FIFO under SPSC),
+  `Closed_then_stays_Closed` (the universal closure invariant — once closed, no
+  operation reopens). Bounded-queue (`capacity`/`is_full`) theorems deferred.
+  Backs `lazily-spec/conformance/collections/queuecell_*.json`.
+- `LazilyFormal/TopicCell.lean` — broadcast topic stub (structure + key
+  invariants declared, proofs deferred to distributed-queue PRD Phase 3).
+- `LazilyFormal/WorkQueueCell.lean` — competing-consumer work queue stub
+  (structure + delivery-state model + key invariants declared, proofs deferred
+  to PRD Phase 2 consensus core).
 
 `send` is a total function, so confluence/determinism is by construction — the
 universal guarantee every binding inherits by replaying the shared conformance
@@ -148,7 +165,8 @@ owns primitive types + the flat kernel + the full Harel chart + the reactive
 graph kernel (Slot/Cell/Signal/Effect) + the keyed collection (CellMap/CellFamily)
 + the ordered tree (CellTree) + the memoized semantic tree (SemTree) + manufactured
 identity (StableId) + the collection-level CRDTs (TextCrdt base + delta sync,
-SeqCrdt) + distributed signaling (peer FSM + roster); every
+SeqCrdt) + distributed signaling (peer FSM + roster) + the reactive queue
+(QueueCell; TopicCell/WorkQueueCell stubs); every
 `lazily-spec/conformance/collections/*.json` fixture now has an executable
 reference here. lazily-spec owns the wire protocol (IPC Snapshot/Delta, the
 register/`PnCounter`/`CellCrdt` + `CrdtSync` layer, FFI, permission, capability

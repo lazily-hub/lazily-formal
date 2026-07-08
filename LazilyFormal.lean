@@ -21,3 +21,5 @@ import LazilyFormal.SignalingRoster
 import LazilyFormal.Receipt
 import LazilyFormal.Command
 import LazilyFormal.QueueCell
+import LazilyFormal.TopicCell
+import LazilyFormal.WorkQueueCell
