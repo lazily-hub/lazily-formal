@@ -20,3 +20,4 @@ import LazilyFormal.Signaling
 import LazilyFormal.SignalingRoster
 import LazilyFormal.Receipt
 import LazilyFormal.Command
+import LazilyFormal.QueueCell

@@ -19,24 +19,24 @@ effect lifecycle — that every binding implements.
 The full `lazily` capability set and its cross-language coverage (`lazily-rs`,
 `lazily-kt`, `lazily-js`). `✅` shipped, `~` partial, `—` not applicable/absent.
 
-| Feature | Rust | Kotlin | JS |
+| Feature | Rust | Kotlin | JS | C++ |
 |---------|:----:|:------:|:--:|
-| Reactive graph — `Context`, `Slot`, `Cell`, `memo`, `Signal` (eager), `Effect`, `batch` | ✅ | ✅ | ✅ |
-| Thread-safe `Context` (`Send + Sync`, lock-backed) | ✅ | ✅ | — |
-| Async reactive `Context` | ✅ | ✅ | — |
-| Statechart (Harel) + state machine | ✅ | ✅ | ✅ |
-| Keyed cell collections + `reconcile` + `SemTree` (keyed tree) | ✅ | ✅ | ✅ |
-| Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ |
-| Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ |
-| **`TextCrdt` delta sync — `version_vector` / `delta_since` / `apply_delta` (`#lztextsync`)** | ✅ | ✅ | ✅ |
-| Move-aware sequence CRDT (`SeqCrdt`) | ✅ | ✅ | ✅ |
-| Registers (LWW / MV), `PnCounter`, `CellCrdt` | ✅ | ✅ | ✅ |
-| IPC wire — `Snapshot` + `Delta` + `CrdtSync` + shared-memory blobs | ✅ | ✅ | ~ |
-| State projection / mirror | ✅ | ✅ | ✅ |
-| FFI boundary | ✅ | ✅ | n/a |
-| Distributed plane (WebRTC transport + signaling) | ✅ | — | — |
-| Causal receipts (`observed` / `accepted` non-terminal, `applied` / `rejected` terminal) | ✅ | ✅ | ✅ |
-| Instrumentation / benchmarks | ✅ | — | — |
+| Reactive graph — `Context`, `Slot`, `Cell`, `memo`, `Signal` (eager), `Effect`, `batch` | ✅ | ✅ | ✅ | ✅ |
+| Thread-safe `Context` (`Send + Sync`, lock-backed) | ✅ | ✅ | — | ✅ |
+| Async reactive `Context` | ✅ | ✅ | — | ✅ |
+| Statechart (Harel) + state machine | ✅ | ✅ | ✅ | ✅ |
+| Keyed cell collections + `reconcile` + `SemTree` (keyed tree) | ✅ | ✅ | ✅ | ✅ |
+| Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ |
+| Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ |
+| **`TextCrdt` delta sync — `version_vector` / `delta_since` / `apply_delta` (`#lztextsync`)** | ✅ | ✅ | ✅ | ✅ |
+| Move-aware sequence CRDT (`SeqCrdt`) | ✅ | ✅ | ✅ | ✅ |
+| Registers (LWW / MV), `PnCounter`, `CellCrdt` | ✅ | ✅ | ✅ | ✅ |
+| IPC wire — `Snapshot` + `Delta` + `CrdtSync` + shared-memory blobs | ✅ | ✅ | ~ | ✅ |
+| State projection / mirror | ✅ | ✅ | ✅ | ✅ |
+| FFI boundary | ✅ | ✅ | n/a | ✅ |
+| Distributed plane (WebRTC transport + signaling) | ✅ | — | — | ✅ |
+| Causal receipts (`observed` / `accepted` non-terminal, `applied` / `rejected` terminal) | ✅ | ✅ | ✅ | ✅ |
+| Instrumentation / benchmarks | ✅ | — | — | ✅ |
 
 CRDT convergence and the wire protocol are pinned by the shared conformance fixtures
 and JSON Schemas in `lazily-spec` and the Lean models in `lazily-formal`.
@@ -373,7 +373,7 @@ synchronization-model checker cannot shim).
 |------|------|
 | `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Slot/Cell/Signal/Effect) + thread-safe batch context + keyed collection (CellMap/CellFamily) + ordered tree (CellTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle + causal receipt projection; universal proofs |
 | `lazily-spec` | wire protocol + JSON schemas + IPC/CRDT Lean proofs + conformance fixtures (incl. `conformance/statechart/`) |
-| `lazily-rs` / `lazily-py` / `lazily-zig` / `lazily-kt` / `lazily-js` / `lazily-dart` | native implementations; replay the shared conformance fixtures |
+| `lazily-rs` / `lazily-py` / `lazily-zig` / `lazily-kt` / `lazily-js` / `lazily-dart` / `lazily-go` / `lazily-cpp` | native implementations; replay the shared conformance fixtures |
 
 ## Verify
 
