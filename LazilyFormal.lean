@@ -19,3 +19,4 @@ import LazilyFormal.LosslessTreeSync
 import LazilyFormal.Signaling
 import LazilyFormal.SignalingRoster
 import LazilyFormal.Receipt
+import LazilyFormal.Command
