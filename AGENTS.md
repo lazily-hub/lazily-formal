@@ -153,6 +153,16 @@ this repo.
 - `LazilyFormal/WorkQueueCell.lean` — competing-consumer work queue stub
   (structure + delivery-state model + key invariants declared, proofs deferred
   to PRD Phase 2 consensus core).
+- `LazilyFormal/ZeroCopyTransport.lean` — the cross-process zero-copy transport
+  (`lazily-spec/docs/zero-copy-transport.md`): a backend-agnostic descriptor
+  model where a producer spills large payloads to a blob backend (POSIX `shm` /
+  Apache Arrow / in-process) and ships a `Descriptor`; the receiver resolves it
+  zero-copy. Theorems: `resolve_write` / `transport_roundtrip` (spill-then-resolve
+  identity — zero-copy correctness, the consumer reads the backend's own bytes),
+  `resolve_wrong_backend` (backend-kind isolation → receiver routes by `kind`),
+  `resolve_stale_generation` (ABA safety — a reused/freed slot is not misread),
+  `resolve_corrupt_checksum` (corrupted descriptors rejected). Holds for every
+  backend that maintains its issued-table semantics.
 
 `send` is a total function, so confluence/determinism is by construction — the
 universal guarantee every binding inherits by replaying the shared conformance
