@@ -370,7 +370,7 @@ of the element set. Every compute layer that has a pure-machine core is modeled:
 | lazily-spec compute layer (`MUST`) | lazily-formal module | Status |
 |-------------------------------------|----------------------|--------|
 | Reactive core (Cell / Slot / Effect / Signal) | `Reactive.lean` | modeled |
-| ReactiveFamily materialization (eager default / lazy opt-in, `#lzmatmode`) | `Materialization.lean` | modeled (contract; unified cell/slot family, impls pending) |
+| ReactiveFamily materialization (eager default / lazy opt-in, `#lzmatmode`) | `Materialization.lean` | modeled (contract; unified cell/slot family); Rust + C++ impls shipped (`ReactiveFamily`) |
 | Keyed cell collections (`CellMap`/`CellTree`, reconciliation) | `Collection.lean`, `Tree.lean`, `Reconciliation.lean` | modeled |
 | Memoized semantic tree (`SemTree`) | `SemTree.lean` | modeled |
 | Manufactured identity / stable-id alignment | `StableId.lean` | modeled |
