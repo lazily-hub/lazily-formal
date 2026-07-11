@@ -30,6 +30,7 @@ The full `lazily` capability set and its cross-language coverage (`lazily-rs`,
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ |
 | **`TextCrdt` delta sync — `version_vector` / `delta_since` / `apply_delta` (`#lztextsync`)** | ✅ | ✅ | ✅ | ✅ |
 | Move-aware sequence CRDT (`SeqCrdt`) | ✅ | ✅ | ✅ | ✅ |
+| **Reactive family sync — membership propagation + materialize-on-ingest + derived-aggregate transparency (`#lzfamilysync`)** | ✅ | ✅ | ✅ | ✅ |
 | Registers (LWW / MV), `PnCounter`, `CellCrdt` | ✅ | ✅ | ✅ | ✅ |
 | IPC wire — `Snapshot` + `Delta` + `CrdtSync` + shared-memory blobs | ✅ | ✅ | ~ | ✅ |
 | State projection / mirror | ✅ | ✅ | ✅ | ✅ |
@@ -376,6 +377,7 @@ of the element set. Every compute layer that has a pure-machine core is modeled:
 | Manufactured identity / stable-id alignment | `StableId.lean` | modeled |
 | Free-text character CRDT (`TextCrdt`, base convergence + delta sync) | `TextCrdt.lean`, `TextCrdtSync.lean` | modeled |
 | Move-aware sequence CRDT (`SeqCrdt`) | `SeqCrdt.lean` | modeled |
+| Reactive family sync — membership propagation + materialize-on-ingest + derived-aggregate transparency (`#lzfamilysync`) | `FamilySync.lean` | modeled |
 | Distributed signaling (peer-connection FSM + roster) | `Signaling.lean`, `SignalingRoster.lean` | modeled |
 | Flat state machine | `StateMachine.lean` | modeled |
 | Harel state charts | `StateChart.lean` | modeled |
