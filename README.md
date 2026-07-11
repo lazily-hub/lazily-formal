@@ -36,7 +36,7 @@ The full `lazily` capability set and its cross-language coverage (`lazily-rs`,
 | FFI boundary | ✅ | ✅ | n/a | ✅ |
 | Distributed plane (WebRTC transport + signaling) | ✅ | — | — | ✅ |
 | Causal receipts (`observed` / `accepted` non-terminal, `applied` / `rejected` terminal) | ✅ | ✅ | ✅ | ✅ |
-| Instrumentation / benchmarks | ✅ | — | — | ✅ |
+| Instrumentation / benchmarks | ✅ | — | ✅ | ✅ |
 
 CRDT convergence and the wire protocol are pinned by the shared conformance fixtures
 and JSON Schemas in `lazily-spec` and the Lean models in `lazily-formal`.
