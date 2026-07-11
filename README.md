@@ -16,31 +16,54 @@ effect lifecycle — that every binding implements.
 
 ## Feature Set
 
-The full `lazily` capability set and its cross-language coverage (`lazily-rs`,
-`lazily-kt`, `lazily-js`). `✅` shipped, `~` partial, `—` not applicable/absent.
+The full `lazily` capability set and its cross-language coverage across every
+binding (`lazily-rs`, `lazily-py`, `lazily-kt`, `lazily-js`, `lazily-dart`,
+`lazily-zig`, `lazily-go`, `lazily-cpp`). Legend: ✅ shipped · `~` partial · `—` absent or not applicable.
+This table is generated from [`lazily-spec/coverage.json`](../lazily-spec/coverage.json)
+— the canonical matrix with per-cell notes and platform carve-outs lives in
+lazily-spec's [Cross-Language Coverage](../lazily-spec/docs/coverage.md). It is
+kept in sync by lazily-spec's `scripts/sync-coverage.mjs`; run `make coverage-sync`
+in `lazily-spec` after editing `coverage.json`.
 
-| Feature | Rust | Kotlin | JS | C++ |
-|---------|:----:|:------:|:--:|
-| Reactive graph — `Context`, `Slot`, `Cell`, `memo`, `Signal` (eager), `Effect`, `batch` | ✅ | ✅ | ✅ | ✅ |
-| Thread-safe `Context` (`Send + Sync`, lock-backed) | ✅ | ✅ | — | ✅ |
-| Async reactive `Context` | ✅ | ✅ | — | ✅ |
-| Statechart (Harel) + state machine | ✅ | ✅ | ✅ | ✅ |
-| Keyed cell collections + `reconcile` + `SemTree` (keyed tree) | ✅ | ✅ | ✅ | ✅ |
-| Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ |
-| Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ |
-| **`TextCrdt` delta sync — `version_vector` / `delta_since` / `apply_delta` (`#lztextsync`)** | ✅ | ✅ | ✅ | ✅ |
-| Move-aware sequence CRDT (`SeqCrdt`) | ✅ | ✅ | ✅ | ✅ |
-| **Reactive family sync — membership propagation + materialize-on-ingest + derived-aggregate transparency (`#lzfamilysync`)** | ✅ | ✅ | ✅ | ✅ |
-| Registers (LWW / MV), `PnCounter`, `CellCrdt` | ✅ | ✅ | ✅ | ✅ |
-| IPC wire — `Snapshot` + `Delta` + `CrdtSync` + shared-memory blobs | ✅ | ✅ | ~ | ✅ |
-| State projection / mirror | ✅ | ✅ | ✅ | ✅ |
-| FFI boundary | ✅ | ✅ | n/a | ✅ |
-| Distributed plane (WebRTC transport + signaling) | ✅ | — | — | ✅ |
-| Causal receipts (`observed` / `accepted` non-terminal, `applied` / `rejected` terminal) | ✅ | ✅ | ✅ | ✅ |
-| Instrumentation / benchmarks | ✅ | — | ✅ | ✅ |
+<!-- coverage-table:start -->
+| Feature | Rust | Python | Kotlin | JS | Dart | Zig | Go | C++ |
+| --------- | :----: | :------: | :------: | :--: | :----: | :---: | :--: | :---: |
+| Reactive graph — `Cell` / `Slot` / `Signal` / `Effect` / memo / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Reactive family (`ReactiveFamily`) — keyed cell/slot family + materialization mode (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Thread-safe reactive family (`ThreadSafeReactiveFamily`) — `Send + Sync` keyed family + materialization confluence (`#lzmatmode`) | ✅ | — | — | ✅ | — | ✅ | ✅ | ✅ |
+| Async reactive family (`AsyncReactiveFamily`) — keyed family + eventual transparency (`#lzmatmode`) | ✅ | — | — | ✅ | — | ✅ | ✅ | ✅ |
+| Reactive family sync — membership propagation + materialize-on-ingest + derived-aggregate transparency (`#lzfamilysync`) | ✅ | — | ✅ | ✅ | — | ✅ | ✅ | ✅ |
+| Thread-safe context (lock-backed) | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ |
+| Async reactive context | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Flat state machine | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Harel state charts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Keyed cell collections (`CellMap` / `CellTree`) + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Memoized semantic tree (`SemTree`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Move-aware sequence CRDT (`SeqCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Lossless tree CRDT core (`LosslessTreeCrdt`, M1) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Lossless tree — dotted-frontier anti-entropy | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Lossless tree — concurrent merge convergence | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Registers (LWW / MV) + `PnCounter` + `CellCrdt` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| IPC wire — `Snapshot` + `Delta` + `CrdtSync` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Shared-memory blob path (`ShmBlobArena`) | ✅ | ✅ | ✅ | ✅ | ~ | ✅ | ✅ | ✅ |
+| Cross-process zero-copy transport (`BlobBackend` / shm / arrow) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Distributed CRDT plane (`CrdtPlaneRuntime` / anti-entropy) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Distributed plane — WebRTC transport + signaling | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| State projection / mirror | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Causal receipts (`CausalReceipts` outcome projection) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Message-passing + RPC command plane (`command-plane-v1`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| C-ABI FFI boundary | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Permission boundary (`PeerPermissions` / `RemoteOp`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Capability negotiation (`SessionHandshake`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Instrumentation / benchmarks | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+<!-- coverage-table:end -->
 
 CRDT convergence and the wire protocol are pinned by the shared conformance fixtures
-and JSON Schemas in `lazily-spec` and the Lean models in `lazily-formal`.
+and JSON Schemas in `lazily-spec` and the Lean models in this repo.
 ## Architecture
 
 Layered primitive → flat kernels → full chart → reactive data-structure family
