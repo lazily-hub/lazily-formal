@@ -1,9 +1,17 @@
 /-
-! Materialization mode — formal model (eager default / lazy opt-in).
+! ReactiveFamily materialization — formal model (eager default / lazy opt-in).
 
 `lazily-spec/cell-model.md` § "Materialization mode" fixes an axis orthogonal to
 cell *kind*: **when a derived cell's backing node is allocated**, not what it
-computes. Two modes:
+computes. It is the materialization axis of a **`ReactiveFamily`** — the unified
+keyed family whose entries are either **input cells** (a `CellHandle`, always
+materialized) or **derived slots** (a `SlotHandle`, materialized eagerly or
+lazily). Entry *kind* (`EntryKind.cell` / `EntryKind.slot`, below) is exactly the
+handle-kind axis the Rust `ReactiveFamily<K, V, H>` abstracts over, and it is
+orthogonal to `Mode`: choosing lazy defers only `slot` entries, never `cell`
+ones (`cell_entries_materialized_in_every_mode`).
+
+Two modes govern the derived (`slot`) entries:
 
 - **Eager (default)** — every derived node is allocated at build time (the shared
   high-performance core; a read is a direct node access).
@@ -65,6 +73,16 @@ inductive Mode where
 /-- The default materialization mode. Implementations MUST default to eager. -/
 def Mode.default : Mode := Mode.eager
 
+/-- The two entry kinds a `ReactiveFamily` holds. A `cell` entry is an input
+    (`CellHandle`) — always materialized, its value set directly. A `slot` entry
+    is derived (`SlotHandle`) — materialized eagerly or lazily per `Mode`. This is
+    the handle-kind axis the Rust `ReactiveFamily<K, V, H>` abstracts over, kept
+    orthogonal to `Mode`. -/
+inductive EntryKind where
+  | cell
+  | slot
+  deriving Repr, DecidableEq
+
 /-- The static description of a graph: each node's canonical fully-evaluated value
     and whether it is an input cell (always materialized) or a derived slot. -/
 structure Spec where
@@ -73,6 +91,11 @@ structure Spec where
   /-- `true` for an input cell (materialized in every mode), `false` for a derived
       slot (materialized eagerly, or lazily on first read). -/
   isInput : NodeId → Bool
+
+/-- A node's `ReactiveFamily` entry kind: input cells are `cell`, derived slots
+    are `slot`. This is `isInput` read as the handle-kind axis. -/
+def Spec.kind (s : Spec) (id : NodeId) : EntryKind :=
+  if s.isInput id then EntryKind.cell else EntryKind.slot
 
 /-- Runtime materialization state: which nodes are currently allocated
     (`present`) and the value cached at each. A node with `present = false` has
@@ -229,5 +252,31 @@ theorem lazy_defers_slots (s : Spec) (id : NodeId)
 theorem lazy_present_subset_eager (s : Spec) (id : NodeId)
     (_h : (build Mode.lazy s).present id = true) :
     (build Mode.eager s).present id = true := rfl
+
+/-! ## Entry kind is orthogonal to materialization mode -/
+
+/-- A `cell` (input) entry is materialized under **either** mode — the formal
+    statement that a `ReactiveFamily`'s entry *kind* is orthogonal to its
+    materialization *mode*. Choosing lazy defers only `slot` (derived) entries;
+    a `cell` (input) entry is always present, eager or lazy. -/
+theorem cell_entries_materialized_in_every_mode (s : Spec) (mode : Mode) (id : NodeId)
+    (hcell : s.kind id = EntryKind.cell) : (build mode s).present id = true := by
+  have hin : s.isInput id = true := by
+    by_cases h : s.isInput id = true
+    · exact h
+    · simp [Spec.kind, h] at hcell
+  cases mode
+  · rfl
+  · exact hin
+
+/-- Conversely, an unread `slot` (derived) entry is deferred under lazy — the
+    memory advantage restated on the entry-kind axis. -/
+theorem slot_entries_deferred_under_lazy (s : Spec) (id : NodeId)
+    (hslot : s.kind id = EntryKind.slot) : (build Mode.lazy s).present id = false := by
+  have hin : s.isInput id = false := by
+    cases hb : s.isInput id with
+    | false => rfl
+    | true => simp [Spec.kind, hb] at hslot
+  exact hin
 
 end LazilyFormal.Materialization

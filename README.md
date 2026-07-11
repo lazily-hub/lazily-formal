@@ -241,7 +241,15 @@ hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent
   universal form of "a changed eager Signal emits `SlotValue`, never bare
   `Invalidate`, for its backing slot".
 
-**Materialization mode (`Materialization`) — eager default / lazy opt-in (`#lzmatmode`)**
+**ReactiveFamily materialization (`Materialization`) — eager default / lazy opt-in (`#lzmatmode`)**
+
+The materialization axis of a `ReactiveFamily` — the unified keyed family whose
+entries are input cells (`EntryKind.cell`, a `CellHandle`) or derived slots
+(`EntryKind.slot`, a `SlotHandle`). Entry kind is orthogonal to mode.
+- `cell_entries_materialized_in_every_mode` / `slot_entries_deferred_under_lazy` —
+  entry *kind* ⟂ materialization *mode*: a `cell` (input) entry is present under
+  either mode; an unread `slot` (derived) entry is deferred under lazy. This is
+  the handle-kind axis the Rust `ReactiveFamily<K, V, H>` abstracts over.
 - `observe_canonical` — the headline transparency law: a read yields the node's
   spec value under *either* mode (`observe (build mode spec) id = spec.val id`).
 - `eager_lazy_observationally_equivalent` / `observe_mode_independent` — the value
@@ -362,7 +370,7 @@ of the element set. Every compute layer that has a pure-machine core is modeled:
 | lazily-spec compute layer (`MUST`) | lazily-formal module | Status |
 |-------------------------------------|----------------------|--------|
 | Reactive core (Cell / Slot / Effect / Signal) | `Reactive.lean` | modeled |
-| Materialization mode (eager default / lazy opt-in, `#lzmatmode`) | `Materialization.lean` | modeled (contract); Rust impl shipped (`MaterializedFamily`) |
+| ReactiveFamily materialization (eager default / lazy opt-in, `#lzmatmode`) | `Materialization.lean` | modeled (contract; unified cell/slot family, impls pending) |
 | Keyed cell collections (`CellMap`/`CellTree`, reconciliation) | `Collection.lean`, `Tree.lean`, `Reconciliation.lean` | modeled |
 | Memoized semantic tree (`SemTree`) | `SemTree.lean` | modeled |
 | Manufactured identity / stable-id alignment | `StableId.lean` | modeled |
@@ -388,7 +396,7 @@ synchronization-model checker cannot shim).
 
 | Repo | Owns |
 |------|------|
-| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Slot/Cell/Signal/Effect) + materialization mode (eager default / lazy opt-in, observational transparency) + thread-safe batch context + keyed collection (CellMap/CellFamily) + ordered tree (CellTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle + causal receipt projection; universal proofs |
+| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Slot/Cell/Signal/Effect) + ReactiveFamily materialization (unified cell/slot family, eager default / lazy opt-in, observational transparency) + thread-safe batch context + keyed collection (CellMap/CellFamily) + ordered tree (CellTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle + causal receipt projection; universal proofs |
 | `lazily-spec` | wire protocol + JSON schemas + IPC/CRDT Lean proofs + conformance fixtures (incl. `conformance/statechart/`) |
 | `lazily-rs` / `lazily-py` / `lazily-zig` / `lazily-kt` / `lazily-js` / `lazily-dart` / `lazily-go` / `lazily-cpp` | native implementations; replay the shared conformance fixtures |
 
