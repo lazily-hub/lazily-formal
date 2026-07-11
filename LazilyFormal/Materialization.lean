@@ -279,4 +279,83 @@ theorem slot_entries_deferred_under_lazy (s : Spec) (id : NodeId)
     | true => simp [Spec.kind, hb] at hslot
   exact hin
 
+/-! ## Thread-safe flavor — materialization confluence
+
+The `ThreadSafeReactiveFamily` (`Arc<Mutex<..>>`-backed) shares this exact abstract
+model: its per-key `materialize` is the same operation, only serialized by a mutex.
+A mutex admits a concurrent workload as *some* sequential order of the per-key
+materializations. What makes that safe — what lets a `Send + Sync` family serve
+observations from any thread with no per-key locking of the value axis — is that
+materialization is **confluent**: the present set and every observed value are
+independent of the order in which keys are materialized. These theorems prove that
+order-independence, so the thread-safe family is observationally identical to the
+single-threaded `ReactiveFamily` regardless of interleaving. -/
+
+/-- A node is present after materializing `a` iff it was the target `a` or was
+    already present. Independent of whether `a` had been materialized before —
+    the union characterization that drives order-independence. -/
+theorem materialize_present_iff (s : Spec) (m : Mat) (a n : NodeId) :
+    (materialize s m a).present n = true ↔ (n = a ∨ m.present n = true) := by
+  unfold materialize
+  by_cases hp : m.present a = true
+  · rw [if_pos hp]
+    apply Iff.intro
+    · intro h; exact Or.inr h
+    · intro h
+      cases h with
+      | inl hna => rw [hna]; exact hp
+      | inr hn => exact hn
+  · rw [if_neg hp]
+    show (if n = a then true else m.present n) = true ↔ (n = a ∨ m.present n = true)
+    by_cases hna : n = a
+    · rw [if_pos hna]
+      exact Iff.intro (fun _ => Or.inl hna) (fun _ => rfl)
+    · rw [if_neg hna]
+      apply Iff.intro
+      · intro h; exact Or.inr h
+      · intro h
+        cases h with
+        | inl h' => exact absurd h' hna
+        | inr h' => exact h'
+
+/-- **Present-set confluence.** Materializing `a` then `b` allocates the same set
+    of nodes as `b` then `a` — the present set does not depend on order. This is
+    the structural justification for mutex-serialized concurrent materialization:
+    whatever order the lock admits, the allocated set is identical. -/
+theorem materialize_present_comm (s : Spec) (m : Mat) (a b n : NodeId) :
+    (materialize s (materialize s m a) b).present n = true
+      ↔ (materialize s (materialize s m b) a).present n = true := by
+  rw [materialize_present_iff s (materialize s m a) b n,
+      materialize_present_iff s m a n,
+      materialize_present_iff s (materialize s m b) a n,
+      materialize_present_iff s m b n]
+  apply Iff.intro
+  · intro h
+    cases h with
+    | inl hb => exact Or.inr (Or.inl hb)
+    | inr h2 =>
+      cases h2 with
+      | inl ha => exact Or.inl ha
+      | inr hp => exact Or.inr (Or.inr hp)
+  · intro h
+    cases h with
+    | inl ha => exact Or.inr (Or.inl ha)
+    | inr h2 =>
+      cases h2 with
+      | inl hb => exact Or.inl hb
+      | inr hp => exact Or.inr (Or.inr hp)
+
+/-- **Observation confluence.** From a canonical state, the value read at any node
+    is the same whether `a` or `b` was materialized first — observed values are
+    order-independent. Together with `materialize_present_comm`, any serialization
+    a mutex admits yields the same observable family. -/
+theorem materialize_observe_comm (s : Spec) (m : Mat) (hc : Canonical s m)
+    (a b n : NodeId) :
+    observe s (materialize s (materialize s m a) b) n
+      = observe s (materialize s (materialize s m b) a) n := by
+  rw [observe_eq_val_of_canonical s _
+        (materialize_canonical s _ b (materialize_canonical s m a hc)) n,
+      observe_eq_val_of_canonical s _
+        (materialize_canonical s _ a (materialize_canonical s m b hc)) n]
+
 end LazilyFormal.Materialization
