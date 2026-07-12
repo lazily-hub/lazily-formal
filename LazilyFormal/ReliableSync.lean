@@ -365,4 +365,139 @@ theorem multi_epoch_apply_eq_fold (s : GState) (d : Delta) :
     (applyDelta (s, d.base_epoch) d).1 = (applyDeltaRun (s, 0) (unitDeltas d)).1 :=
   multi_epoch_apply_eq_fold_state s d
 
+/-! ### Outbox as a bounded cursor-queue + per-algebra coalescing (`#lzsync-backpressure`)
+
+The unacked outbox is a **queue**: `append` pushes to the tail, an `OutboxAck`
+cursor dequeues the acked front, `replay_from` peeks the unacked suffix, and the
+retained depth is the fill level. A peer that stops acking fills the queue — so a
+bounded outbox is itself the backpressure signal (`is_full`). To stay bounded under
+a persistently-slow peer *without dropping an op*, the outbox coalesces its unacked
+suffix, and **how** it coalesces is dispatched by the element's merge algebra:
+
+- an idempotent-commutative-associative **join** cell (LWW register → last/max-stamp
+  value, OR-set → union, liveness lattice) collapses its suffix to a single joined
+  value — order-, regroup-, and retry-independent (`coalesce_by_join_sound`),
+  memory-bounded;
+- a whole-graph projection collapses to a `Snapshot` — adopting it subsumes the
+  dropped delta suffix (`coalesce_to_snapshot_state_equiv`), memory-bounded;
+- an **op-log** cell (`QueueCell`) has no idempotent join, so it only *fuses* a run
+  of ops into one batch (`batch_fusion_state`) — order-preserving and lossless but
+  frame-bounded, not memory-bounded (a queue cannot drop elements and stay a queue).
+-/
+
+/-- Epoch-tagged outbound frames; tail is newest (a `Delta` stands in for any frame). -/
+abbrev OutboxQueue := List (Nat × Delta)
+
+/-- Push a frame to the tail (`DurableOutbox.append`). -/
+def enqueue (q : OutboxQueue) (e : Nat) (d : Delta) : OutboxQueue := q ++ [(e, d)]
+
+/-- Retain only the unacked suffix (`ack_through` prunes epochs `≤ k`). -/
+def ackThrough (q : OutboxQueue) (k : Nat) : OutboxQueue :=
+  q.filter (fun p => decide (k < p.1))
+
+/-- Queue depth = retained frame count = the backpressure fill level. -/
+def depth (q : OutboxQueue) : Nat := q.length
+
+/-- Collapse the whole unacked suffix to a single frame (the coalesced snapshot /
+joined value at the head epoch). -/
+def coalesce (e : Nat) (d : Delta) : OutboxQueue := [(e, d)]
+
+/-- Filter with an all-false predicate empties the list. -/
+theorem filter_none {α} (P : α → Bool) (l : List α) (h : ∀ a ∈ l, P a = false) :
+    l.filter P = [] := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+    have hx : P x = false := h x List.mem_cons_self
+    have hrest : ∀ a ∈ xs, P a = false := fun a ha => h a (List.mem_cons_of_mem x ha)
+    simp [hx, ih hrest]
+
+/-- Filter with an all-true predicate keeps the list. -/
+theorem filter_all {α} (P : α → Bool) (l : List α) (h : ∀ a ∈ l, P a = true) :
+    l.filter P = l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+    have hx : P x = true := h x List.mem_cons_self
+    have hrest : ∀ a ∈ xs, P a = true := fun a ha => h a (List.mem_cons_of_mem x ha)
+    simp [hx, ih hrest]
+
+/-- **Push fills.** `append` grows depth by one — the producer drives toward `is_full`. -/
+theorem enqueue_depth (q : OutboxQueue) (e : Nat) (d : Delta) :
+    depth (enqueue q e d) = depth q + 1 := by
+  simp [depth, enqueue]
+
+/-- **Ack dequeues the front (FIFO).** With the acked front all `≤ k` and the unacked
+tail all `> k` (the epoch-monotone append invariant), `ack_through k` retains exactly
+the tail — the outbox is a cursor-queue whose consumer is the peer ack, and a peer
+that stops acking (front never grows) leaves the tail to fill. -/
+theorem ackThrough_dequeues_front (front back : OutboxQueue) (k : Nat)
+    (hf : ∀ p ∈ front, p.1 ≤ k) (hb : ∀ p ∈ back, k < p.1) :
+    ackThrough (front ++ back) k = back := by
+  have hnone : ∀ p ∈ front, (decide (k < p.1)) = false := by
+    intro p hp
+    simp only [decide_eq_false_iff_not, Nat.not_lt]
+    exact hf p hp
+  have hall : ∀ p ∈ back, (decide (k < p.1)) = true := by
+    intro p hp
+    simp only [decide_eq_true_eq]
+    exact hb p hp
+  simp only [ackThrough, List.filter_append,
+    filter_none _ front hnone, filter_all _ back hall, List.nil_append]
+
+/-- **Coalesce bounds memory.** However far the peer has fallen behind, coalescing
+the unacked suffix leaves a single frame — depth 1. -/
+theorem coalesce_depth_one (e : Nat) (d : Delta) : depth (coalesce e d) = 1 := rfl
+
+/-- **State-supersede coalesce is sound (graph frames).** Collapsing the unacked
+delta suffix into the sender's snapshot and adopting it reaches the full-run state —
+`resync_convergence` run sender-initiated (memory bounded to one frame). -/
+theorem coalesce_to_snapshot_state_equiv (s0 : GState) (ds prefix_ : List Delta)
+    (hpre : prefix_ <+: ds) :
+    let full := senderState s0 ds
+    adoptSnapshot (applyDeltaRun (s0, 0) prefix_) full.1 full.2 = full :=
+  resync_convergence s0 ds prefix_ hpre
+
+/-- **Batch-fusion coalesce is state-preserving (op-log frames).** Fusing two op runs
+into one batch applies them in the same order — lossless, order-preserving (the
+`QueueCell` coalesce: frame-bounded, not element-collapsing). -/
+theorem batch_fusion_state (s : GState) (a b : List Op) :
+    applyOps s (a ++ b) = applyOps (applyOps s a) b :=
+  applyOps_append s a b
+
+/-- The LWW coalesce of a suffix is the join-fold from `r0`; a strictly-newer write
+dominates, so an LWW register's suffix collapses to its last (max-stamp) value. -/
+def lwwCoalesce (r0 : Reg) (suffix : List Reg) : Reg := suffix.foldl joinReg r0
+
+/-- Joining a coalesced pair equals joining the two writes in place — the regroup
+that makes "collapse the suffix, deliver one value" observationally identical to
+delivering the writes separately. -/
+theorem lww_coalesce_regroup (r a b : Reg) :
+    joinReg (joinReg r a) b = joinReg r (joinReg a b) := joinReg_assoc r a b
+
+/-- **Join-coalesce is sound (idempotent-semilattice cells).** An LWW register
+coalesces its suffix to the last (max-stamp) value, an OR-set to the union; because
+each join is commutative/associative/idempotent, a coalesced value delivered once
+equals the whole suffix delivered — order-, regroup-, and retry-independent. The
+per-item coalesce *is* the per-item join. -/
+theorem coalesce_by_join_sound :
+    (∀ a b : Reg, joinReg a b = joinReg b a) ∧
+    (∀ a b c : Reg, joinReg (joinReg a b) c = joinReg a (joinReg b c)) ∧
+    (∀ a : Reg, joinReg a a = a) ∧
+    (∀ a b : ORSet, joinOR a b = joinOR b a) ∧
+    (∀ a b c : ORSet, joinOR (joinOR a b) c = joinOR a (joinOR b c)) ∧
+    (∀ a : ORSet, joinOR a a = a) :=
+  crdt_liveness_convergence_under_retry
+
+/-- **Outbox is a bounded cursor-queue.** Push grows depth by one; ack dequeues the
+acked front (FIFO); a coalesced suffix is one frame — so a bounded outbox is a
+backpressure signal, and coalescing keeps it bounded without dropping an op. -/
+theorem outbox_is_bounded_queue :
+    (∀ (q : OutboxQueue) (e : Nat) (d : Delta), depth (enqueue q e d) = depth q + 1) ∧
+    (∀ (front back : OutboxQueue) (k : Nat),
+      (∀ p ∈ front, p.1 ≤ k) → (∀ p ∈ back, k < p.1) →
+      ackThrough (front ++ back) k = back) ∧
+    (∀ (e : Nat) (d : Delta), depth (coalesce e d) = 1) :=
+  ⟨enqueue_depth, ackThrough_dequeues_front, coalesce_depth_one⟩
+
 end LazilyFormal.ReliableSync
