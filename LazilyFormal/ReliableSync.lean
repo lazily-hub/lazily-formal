@@ -556,4 +556,19 @@ theorem pushRun_preserves_fifo (s : QState) (vs : List Val) :
     rw [hih]
     simp [List.append_assoc]
 
+/-! ### Eviction re-convergence (`#lzsync-partition-eviction`)
+
+A peer dropped on liveness-lease expiry (partition/death) or on an unbounded
+op-log outbox is reclaimed and rejoins as a *fresh* receiver: empty state,
+`last_epoch = 0`, adopting a covering Snapshot rather than replaying a stale
+cursor. Losslessness is `resync_convergence` at the empty prefix. -/
+
+/-- **Evicted peer re-converges via full-resync.** A peer evicted and later returning
+starts fresh (empty prefix) and adopts the sender's snapshot at the final epoch; it
+reaches the full sender state — eviction + rejoin loses nothing. -/
+theorem evicted_peer_resyncs_fresh (s0 : GState) (ds : List Delta) :
+    let full := senderState s0 ds
+    adoptSnapshot (applyDeltaRun (s0, 0) []) full.1 full.2 = full :=
+  resync_convergence s0 ds [] List.nil_prefix
+
 end LazilyFormal.ReliableSync
