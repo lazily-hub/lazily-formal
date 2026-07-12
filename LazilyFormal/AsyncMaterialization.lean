@@ -1,5 +1,5 @@
 /-
-! Async ReactiveFamily materialization — formal model (eventual transparency).
+! Async SlotMap materialization — formal model (eventual transparency).
 
 The async flavor of `Materialization`: keys map to async reactive nodes whose
 derived (slot) entries resolve *asynchronously*. Allocation (the present-set axis)
@@ -9,11 +9,11 @@ driven (an `AsyncContext.get_async` on the handle), then `resolved`. Input cells
 are resolved at build.
 
 A non-blocking read therefore returns `Option Value`: `none` while pending,
-`some v` once resolved — exactly the Rust `AsyncReactiveFamily::observe`
-signature. The single-threaded family's transparency law (`observe` yields the
-canonical value under either mode) weakens, for the async family, to **eventual
+`some v` once resolved — exactly the Rust `AsyncSlotMap::observe`
+signature. The single-threaded map's transparency law (`observe` yields the
+canonical value under either mode) weakens, for the async map, to **eventual
 transparency**: once a node resolves, its observed value is the canonical value —
-identical to what the synchronous family observes.
+identical to what the synchronous map observes.
 
 Proved here:
 
@@ -21,7 +21,7 @@ Proved here:
   `some (spec.val id)`: the resolved value is the canonical value. The headline law.
 - `async_resolved_matches_sync` — the resolved async read equals (modulo `some`)
   the value the synchronous `Materialization.observe` returns from a canonical
-  state. The async family and the sync family agree on resolved values.
+  state. The async map and the sync map agree on resolved values.
 - `observe_pending_is_none` — an unresolved (pending) read is `none`, never a stale
   or junk value.
 - `cell_resolved_at_build` — input cells are resolved at build (always `some`).
@@ -133,7 +133,7 @@ theorem eventual_transparency (s : Spec) (m : AsyncMat) (id : NodeId)
   rw [if_pos (resolve_resolved_self s m id), resolve_stored_self s m id hc]
 
 /-- The resolved async read equals (modulo `some`) the value the **synchronous**
-    family's `observe` returns from a canonical state: the async and sync families
+    map's `observe` returns from a canonical state: the async and sync maps
     agree on resolved values. -/
 theorem async_resolved_matches_sync (s : Spec) (m : AsyncMat) (id : NodeId)
     (hc : Canonical s m) (sm : Mat) (hsc : Materialization.Canonical s sm) :

@@ -57,8 +57,8 @@ this repo.
   Theorems: `flushBatch_empty`, `flushBatch_singleton_eq_setCell` (refines the
   single-threaded kernel), `flushBatch_dependent_dirty` (coalesced frontier),
   `flushBatch_preserves_nondependent_dirty` (glitch-freedom).
-- `LazilyFormal/Collection.lean` — keyed reactive collection (`CellMap` +
-  `CellFamily`): independent value/membership/order signals, atomic move.
+- `LazilyFormal/Collection.lean` — keyed reactive collection (`CellMap` /
+  `SlotMap`): independent value/membership/order signals, atomic move.
   Theorems: `setEntryValue_preserves_{membership,order,siblings}`,
   `moveKey_preserves_{membership,values}`, `moveKey_advances_order`,
   `addKey_advances_membership_and_order`, `Family.get_idempotent_after_first`
@@ -172,7 +172,7 @@ fixtures in `lazily-spec/conformance/statechart/`.
 
 This is the **formal** layer; `lazily-spec` is the **wire** layer. lazily-formal
 owns primitive types + the flat kernel + the full Harel chart + the reactive
-graph kernel (Slot/Cell/Signal/Effect) + the keyed collection (CellMap/CellFamily)
+graph kernel (Slot/Cell/Signal/Effect) + the keyed collection (CellMap/SlotMap)
 + the ordered tree (CellTree) + the memoized semantic tree (SemTree) + manufactured
 identity (StableId) + the collection-level CRDTs (TextCrdt base + delta sync,
 SeqCrdt) + distributed signaling (peer FSM + roster) + the reactive queue

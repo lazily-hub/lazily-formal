@@ -1,11 +1,12 @@
 /-
 ! Keyed reactive collections — formal model.
 
-The formal counterpart of `lazily-rs/src/cell_family.rs` (`CellMap` /
-`CellFamily`) and the `lazily-spec/cell-model.md` § "Keyed cell collections"
-specification. `CellMap` is a hash collection whose **membership is itself
-reactive**, with one independently-tracked value cell per entry; `CellFamily`
-layers a value factory on top that lazily mints and caches one cell per key.
+The formal counterpart of `lazily-rs/src/cell_family.rs` (`CellMap` / `SlotMap`,
+the `ReactiveMap<K, V, H>` specializations) and the `lazily-spec/cell-model.md`
+§ "Keyed cell collections" specification. `CellMap` is a hash collection whose
+**membership is itself reactive**, with one independently-tracked value cell per
+entry; `get_or_insert_with` (the shared `ReactiveMap` method) lazily mints and
+caches one entry per key on first access.
 
 The universal properties fixed here (no finite fixture suite can establish
 them):
@@ -16,8 +17,8 @@ them):
   duals.
 - **Atomic move preserves identity**: a reorder keeps each entry's cell
   identity (not remove + re-mint), bumping only the order signal once.
-- **CellFamily memoizes per key**: requesting the same key twice returns the
-  same cell (identity stability across the factory).
+- **`get_or_insert_with` memoizes per key**: requesting the same key twice
+  returns the same cell (identity stability across the factory).
 
 These are the "value, set-membership, and order reactivity are independent"
 conformance clauses of `cell-model.md`, restated as Lean theorems over an
@@ -166,60 +167,60 @@ theorem addKey_advances_membership_and_order
   · simp only [addKey, hnew]
   · simp only [addKey, hnew]
 
-/-! ## CellFamily — per-key memoization
+/-! ## ReactiveMap `get_or_insert_with` — per-key memoization
 
-`CellFamily` (`lazily-rs/src/cell_family.rs:315`) layers a value factory on
-top of `CellMap`: a parameterized factory that lazily mints and caches one
-cell per key on first access. The universal guarantee is identity stability —
-the same key resolves to the same cell handle across requests. -/
+`ReactiveMap::get_or_insert_with` (`lazily-rs/src/cell_family.rs:315`) is the
+shared keyed-map factory: it lazily mints and caches one entry per key on first
+access (`SlotMap` uses it for lazy materialization). The universal guarantee is
+identity stability — the same key resolves to the same handle across requests. -/
 
-/-- A `CellFamily` is a `Collection` plus a per-key factory memo table that
+/-- A `ReactiveMap` is a `Collection` plus a per-key factory memo table that
     records which keys have already been minted. -/
-structure Family where
+structure ReactiveMap where
   coll : Collection
   /-- The set of keys whose cell has been minted by the factory so far. -/
   minted : List Key
 
-/-- `Family.get k` (the lazy mint): if `k` has already been minted, return the
+/-- `ReactiveMap.get k` (the lazy mint): if `k` has already been minted, return the
     collection unchanged (identity-stable handle); otherwise mint `k` and
     record it in `minted`. -/
-def Family.get (f : Family) (k : Key) (v : EntryValue) : Family :=
+def ReactiveMap.get (f : ReactiveMap) (k : Key) (v : EntryValue) : ReactiveMap :=
   match f.minted.contains k with
   | true => f
   | false => { f with coll := addKey f.coll k v, minted := f.minted ++ [k] }
 
-/-- If `k` is already minted, `Family.get` is the identity (no-op). -/
-theorem Family.get_of_mem (f : Family) (k : Key) (v : EntryValue)
-    (h : f.minted.contains k = true) : Family.get f k v = f := by
-  simp only [Family.get, h]
+/-- If `k` is already minted, `ReactiveMap.get` is the identity (no-op). -/
+theorem ReactiveMap.get_of_mem (f : ReactiveMap) (k : Key) (v : EntryValue)
+    (h : f.minted.contains k = true) : ReactiveMap.get f k v = f := by
+  simp only [ReactiveMap.get, h]
 
-/-- If `k` is not yet minted, `Family.get` extends `minted` by `[k]`. -/
-theorem Family.get_minted_eq (f : Family) (k : Key) (v : EntryValue)
+/-- If `k` is not yet minted, `ReactiveMap.get` extends `minted` by `[k]`. -/
+theorem ReactiveMap.get_minted_eq (f : ReactiveMap) (k : Key) (v : EntryValue)
     (h : f.minted.contains k = false) :
-    Family.get f k v = { coll := addKey f.coll k v, minted := f.minted ++ [k] } := by
-  simp only [Family.get, h]
+    ReactiveMap.get f k v = { coll := addKey f.coll k v, minted := f.minted ++ [k] } := by
+  simp only [ReactiveMap.get, h]
 
-/-- Requesting the same key twice returns the identical family state the
-    second time — the universal form of "CellFamily lazily mints and caches
+/-- Requesting the same key twice returns the identical map state the
+    second time — the universal form of "`get_or_insert_with` lazily mints and caches
     one cell per key" (`cell-model.md` § Keyed cell collections, point 3:
     "A key resolves to a stable handle for the key's lifetime"). -/
-theorem Family.get_idempotent_after_first
-    (f : Family) (k : Key) (v : EntryValue) :
-    Family.get (Family.get f k v) k v = Family.get f k v := by
+theorem ReactiveMap.get_idempotent_after_first
+    (f : ReactiveMap) (k : Key) (v : EntryValue) :
+    ReactiveMap.get (ReactiveMap.get f k v) k v = ReactiveMap.get f k v := by
   match h : f.minted.contains k with
   | true =>
     -- First get is a no-op (f1 = f); the second is too.
-    have hf : Family.get f k v = f := Family.get_of_mem f k v h
+    have hf : ReactiveMap.get f k v = f := ReactiveMap.get_of_mem f k v h
     simp only [hf]
   | false =>
     -- First get mints: f1.minted = f.minted ++ [k].
-    have hf : Family.get f k v = { coll := addKey f.coll k v, minted := f.minted ++ [k] } :=
-      Family.get_minted_eq f k v h
+    have hf : ReactiveMap.get f k v = { coll := addKey f.coll k v, minted := f.minted ++ [k] } :=
+      ReactiveMap.get_minted_eq f k v h
     rw [hf]
     -- Second get: f1.minted = f.minted ++ [k] ⊇ [k], so k is minted ⇒ no-op.
     have hsecond : (f.minted ++ [k]).contains k = true := by
       rw [List.contains_append]; simp
-    exact Family.get_of_mem
+    exact ReactiveMap.get_of_mem
       { coll := addKey f.coll k v, minted := f.minted ++ [k] } k v hsecond
 
 end LazilyFormal.Collection

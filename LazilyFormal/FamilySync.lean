@@ -1,14 +1,15 @@
 /-
-! Reactive family — distributed membership + value sync convergence (#lzfamilysync).
+! Reactive keyed map — distributed membership + value sync convergence (#lzfamilysync).
 
-A `ReactiveFamily` (`Materialization.lean`) is a *local* keyed reactive collection.
-This module fixes the missing distributed contract: what happens when a family key
+A keyed reactive map (`ReactiveMap` / `SlotMap`; `Collection.lean`) is a *local* keyed
+reactive collection.
+This module fixes the missing distributed contract: what happens when a map key
 is added or updated on one replica and its keyed op reaches another. The plain CRDT
 plane (`lazily-rs/src/crdt_plane.rs`, pre-`#lzfamilysync`) *drops* a keyed op whose
-entry is not already registered locally — so a family key added on one replica never
-appears on another, and any derived aggregate (a count over the family) diverges.
+entry is not already registered locally — so a map key added on one replica never
+appears on another, and any derived aggregate (a count over the map) diverges.
 
-Family-granularity sync closes that gap: an inbound keyed op **materializes** the
+Map-granularity sync closes that gap: an inbound keyed op **materializes** the
 absent entry (seeded from the op's converged register) instead of dropping it. This
 module proves that materialize-on-ingest is *exactly the pointwise CRDT merge*, so it
 inherits the full semilattice convergence — and that the two agent-doc-relevant
@@ -18,18 +19,18 @@ properties follow:
   present on *either* replica; a remote-added key can never be lost
   (`applyOp_present`, `applyOp_absent_adopts`).
 - **Eventual transparency of a derived aggregate** (`aggregate_converges`) — once two
-  replicas converge to the same merged state, any count over the family agrees,
+  replicas converge to the same merged state, any count over the map agrees,
   regardless of op delivery order (`applyOp_comm`). This is the property a live-editor /
   open-document count relies on to converge across editors.
 
 Values are abstract: each entry is an LWW register `(stamp, value)` (mirroring
 `SeqCrdt.lean`), the join is the register semilattice, `none` is the not-yet-
-materialized bottom, and a family state is the pointwise product over keys.
+materialized bottom, and a map state is the pointwise product over keys.
 -/
 
 namespace LazilyFormal.FamilySync
 
-/-- Abstract family key. -/
+/-- Abstract map key. -/
 abbrev Key := Nat
 
 /-- An LWW register `(stamp, value)`: the larger stamp wins; on an equal stamp the
@@ -87,12 +88,12 @@ theorem joinOpt_assoc (a b c : Option Reg) :
     joinOpt (joinOpt a b) c = joinOpt a (joinOpt b c) := by
   cases a <;> cases b <;> cases c <;> simp [joinOpt, joinReg_assoc]
 
-/-! ### A family state is the pointwise product over keys -/
+/-! ### A map state is the pointwise product over keys -/
 
-/-- A whole replica's family: key ↦ register (absent key ↦ `none`). -/
+/-- A whole replica's map: key ↦ register (absent key ↦ `none`). -/
 abbrev State := Key → Option Reg
 
-/-- Merge two family replicas: pointwise optional-register join. -/
+/-- Merge two map replicas: pointwise optional-register join. -/
 def merge (s t : State) : State := fun k => joinOpt (s k) (t k)
 
 theorem merge_comm (s t : State) : merge s t = merge t s := by
@@ -105,11 +106,11 @@ theorem merge_assoc (s t u : State) :
 theorem merge_idem (s : State) : merge s s = s := by
   funext k; simp only [merge]; exact joinOpt_idem (s k)
 
-/-- Whether a family key is currently materialized (present) in a replica. -/
+/-- Whether a map key is currently materialized (present) in a replica. -/
 def present (s : State) (k : Key) : Bool := (s k).isSome
 
 /-- **Membership propagation.** After merging, a key is present iff it was present on
-*either* replica — a family key added on one side is never lost, it is the union. -/
+*either* replica — a map key added on one side is never lost, it is the union. -/
 theorem present_merge (s t : State) (k : Key) :
     present (merge s t) k = (present s k || present t k) := by
   simp only [present, merge, joinOpt]
@@ -122,7 +123,7 @@ structure Op where
   key : Key
   reg : Reg
 
-/-- The single-entry family state carrying just `k ↦ r`. -/
+/-- The single-entry map state carrying just `k ↦ r`. -/
 def single (k : Key) (r : Reg) : State := fun x => if x = k then some r else none
 
 /-- **Materialize-on-ingest.** Applying a keyed op joins that key's register,
@@ -154,7 +155,7 @@ theorem applyOp_absent_adopts (s : State) (o : Op) (h : s o.key = none) :
   simp [applyOp, joinOpt, h]
 
 /-- **Op-delivery confluence.** Two keyed ops applied in either order yield the same
-state — so a replica converges regardless of the order it ingests family ops. Follows
+state — so a replica converges regardless of the order it ingests map ops. Follows
 from the merge semilattice via `applyOp_eq_merge`. -/
 theorem applyOp_comm (s : State) (o p : Op) :
     applyOp (applyOp s o) p = applyOp (applyOp s p) o := by
@@ -170,14 +171,14 @@ theorem applyOp_idem (s : State) (o : Op) :
 
 /-! ### Eventual transparency of a derived aggregate -/
 
-/-- A derived aggregate over the family: the number of keys in `keys` whose entry
-satisfies `p` (e.g. "is live" / "is open"). This models a family's reactive derived
+/-- A derived aggregate over the map: the number of keys in `keys` whose entry
+satisfies `p` (e.g. "is live" / "is open"). This models a map's reactive derived
 count. -/
 def countWhere (s : State) (keys : List Key) (p : Reg → Bool) : Nat :=
   (keys.filter (fun k => match s k with | some r => p r | none => false)).length
 
 /-- **Eventual transparency of a derived aggregate.** Once two replicas converge to the
-same merged state, any derived count over the family agrees — independent of which
+same merged state, any derived count over the map agrees — independent of which
 replica computes it (the state is identical) and, via `merge_comm`, independent of the
 sync direction. This is the convergence a live-editor / open-document count relies on. -/
 theorem aggregate_converges (s t : State) (keys : List Key) (p : Reg → Bool) :

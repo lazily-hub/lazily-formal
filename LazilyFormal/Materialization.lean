@@ -6,9 +6,9 @@
 Materialization is a **caller-provided recipe** — a keyed collection plus a per-key
 factory whose *return type* is the choice: an **input cell** or eager **signal**
 (always materialized) vs a lazy **slot** (`SlotHandle`, allocated on first observe).
-It is *not* a bespoke primitive; a binding MAY package it as a convenience
-`ReactiveFamily<K, V, H>`, but what conforms is the observable behavior below, not
-any type. (This recipe framing exists because pinning a *type* let one binding —
+It is *not* a bespoke primitive: it is simply what `SlotMap` (a
+`ReactiveMap<K, V, H>` specialization) does, and what conforms is the observable
+behavior below, not any type. (This recipe framing exists because pinning a *type* let one binding —
 `lazily-zig`'s spreadsheet benchmark — diverge; pinning the *behavior* here and in
 the fixtures is what keeps implementations convergent.)
 
@@ -77,10 +77,10 @@ inductive Mode where
 /-- The default materialization mode. Implementations MUST default to eager. -/
 def Mode.default : Mode := Mode.eager
 
-/-- The two entry kinds a `ReactiveFamily` holds. A `cell` entry is an input
+/-- The two entry kinds a `SlotMap` holds. A `cell` entry is an input
     (`CellHandle`) — always materialized, its value set directly. A `slot` entry
     is derived (`SlotHandle`) — materialized eagerly or lazily per `Mode`. This is
-    the handle-kind axis the Rust `ReactiveFamily<K, V, H>` abstracts over, kept
+    the handle-kind axis the Rust `ReactiveMap<K, V, H>` abstracts over, kept
     orthogonal to `Mode`. -/
 inductive EntryKind where
   | cell
@@ -96,7 +96,7 @@ structure Spec where
       slot (materialized eagerly, or lazily on first read). -/
   isInput : NodeId → Bool
 
-/-- A node's `ReactiveFamily` entry kind: input cells are `cell`, derived slots
+/-- A node's `SlotMap` entry kind: input cells are `cell`, derived slots
     are `slot`. This is `isInput` read as the handle-kind axis. -/
 def Spec.kind (s : Spec) (id : NodeId) : EntryKind :=
   if s.isInput id then EntryKind.cell else EntryKind.slot
@@ -260,7 +260,7 @@ theorem lazy_present_subset_eager (s : Spec) (id : NodeId)
 /-! ## Entry kind is orthogonal to materialization mode -/
 
 /-- A `cell` (input) entry is materialized under **either** mode — the formal
-    statement that a `ReactiveFamily`'s entry *kind* is orthogonal to its
+    statement that a `SlotMap`'s entry *kind* is orthogonal to its
     materialization *mode*. Choosing lazy defers only `slot` (derived) entries;
     a `cell` (input) entry is always present, eager or lazy. -/
 theorem cell_entries_materialized_in_every_mode (s : Spec) (mode : Mode) (id : NodeId)
@@ -285,15 +285,15 @@ theorem slot_entries_deferred_under_lazy (s : Spec) (id : NodeId)
 
 /-! ## Thread-safe flavor — materialization confluence
 
-The `ThreadSafeReactiveFamily` (`Arc<Mutex<..>>`-backed) shares this exact abstract
+The `ThreadSafeSlotMap` (`Arc<Mutex<..>>`-backed) shares this exact abstract
 model: its per-key `materialize` is the same operation, only serialized by a mutex.
 A mutex admits a concurrent workload as *some* sequential order of the per-key
-materializations. What makes that safe — what lets a `Send + Sync` family serve
+materializations. What makes that safe — what lets a `Send + Sync` map serve
 observations from any thread with no per-key locking of the value axis — is that
 materialization is **confluent**: the present set and every observed value are
 independent of the order in which keys are materialized. These theorems prove that
-order-independence, so the thread-safe family is observationally identical to the
-single-threaded `ReactiveFamily` regardless of interleaving. -/
+order-independence, so the thread-safe map is observationally identical to the
+single-threaded `SlotMap` regardless of interleaving. -/
 
 /-- A node is present after materializing `a` iff it was the target `a` or was
     already present. Independent of whether `a` had been materialized before —
@@ -352,7 +352,7 @@ theorem materialize_present_comm (s : Spec) (m : Mat) (a b n : NodeId) :
 /-- **Observation confluence.** From a canonical state, the value read at any node
     is the same whether `a` or `b` was materialized first — observed values are
     order-independent. Together with `materialize_present_comm`, any serialization
-    a mutex admits yields the same observable family. -/
+    a mutex admits yields the same observable map. -/
 theorem materialize_observe_comm (s : Spec) (m : Mat) (hc : Canonical s m)
     (a b n : NodeId) :
     observe s (materialize s (materialize s m a) b) n
