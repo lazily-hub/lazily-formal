@@ -372,6 +372,29 @@ entries are input cells (`EntryKind.cell`, a `CellHandle`) or derived slots
   affect the current projection.
 - `distinct_terminal_conflicts` — conflicting terminal outcomes fail closed.
 
+**Reliable sync (`ReliableSync`) — gap recovery, at-least-once outbox, multi-epoch delta, liveness (`#lzsync`)**
+- `multi_epoch_apply_eq_fold` (`multi_epoch_apply_eq_fold_state`) — a coalesced
+  multi-epoch-span `Delta` (`epoch > base_epoch + 1`, N ops) produces the same
+  state as its expansion into N single-op unit deltas; `applyDelta_advances_epoch`
+  — the coalesced delta advances `last_epoch` straight to `d.epoch` (atomic).
+- `resync_convergence` — a receiver that drops an arbitrary delta suffix then
+  adopts the resync `Snapshot` reaches the same graph as one that saw every delta
+  (gap recovery is state-equivalent, not lossy).
+- `ingest_apply_on_contiguous` / `ingest_ignore_on_redelivery` /
+  `ingest_request_on_gap` — the `ResyncCoordinator` decision table
+  (Apply / Ignore / RequestSnapshot); `step_redelivery_noop` — a re-delivered
+  (`base_epoch < last`) delta leaves `(state, last)` unchanged.
+- `outbox_at_least_once_exactly_once_effect`
+  (`stepRun_ignore_redelivered_prefix`) — replaying already-applied frames before
+  the new frames reaches the identical `(state, last)` as delivering only the new
+  frames once: no op lost, none doubled (at-least-once + idempotent apply =
+  exactly-once effect).
+- `crdt_liveness_convergence_under_retry` — the OR-set / LWW liveness join is a
+  semilattice (`joinReg_{comm,assoc,idem}`, `joinOR_{comm,assoc,idem}`), so
+  out-of-order and re-delivered liveness ops converge and a retry is a no-op;
+  `orset_add_wins_over_stale_remove` — a re-open (unshadowed add tag) beats a
+  lagging close.
+
 ### By construction (not a theorem, but the strongest guarantee)
 
 - **Determinism** — `send` is a total function of
@@ -401,6 +424,7 @@ of the element set. Every compute layer that has a pure-machine core is modeled:
 | Free-text character CRDT (`TextCrdt`, base convergence + delta sync) | `TextCrdt.lean`, `TextCrdtSync.lean` | modeled |
 | Move-aware sequence CRDT (`SeqCrdt`) | `SeqCrdt.lean` | modeled |
 | Reactive family sync — membership propagation + materialize-on-ingest + derived-aggregate transparency (`#lzfamilysync`) | `FamilySync.lean` | modeled |
+| Reliable sync — resync convergence + at-least-once outbox (exactly-once effect) + multi-epoch delta fold + OR-set/LWW liveness convergence (`#lzsync`) | `ReliableSync.lean` | modeled |
 | Distributed signaling (peer-connection FSM + roster) | `Signaling.lean`, `SignalingRoster.lean` | modeled |
 | Flat state machine | `StateMachine.lean` | modeled |
 | Harel state charts | `StateChart.lean` | modeled |
