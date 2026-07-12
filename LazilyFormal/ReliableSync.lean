@@ -500,4 +500,60 @@ theorem outbox_is_bounded_queue :
     (∀ (e : Nat) (d : Delta), depth (coalesce e d) = 1) :=
   ⟨enqueue_depth, ackThrough_dequeues_front, coalesce_depth_one⟩
 
+/-! ### QueueCell op-log: push-run fusion preserves FIFO (`#queue-oplog`)
+
+A `QueueCell` syncs by its op-log (`QueuePush`/`QueuePop`/`QueueClose`), not by
+state-supersede: order and multiplicity *are* the value, and the consumer's pop
+position is receiver-side state a sender snapshot cannot see. Fusing a maximal run
+of same-direction `QueuePush` ops into one batch is lossless and order-preserving —
+the queue analog of `batch_fusion_state` — so a queue coalesces frames, never state. -/
+
+/-- A queue op-log op (the shell ops that cross the Delta plane). -/
+inductive QOp
+  | push (v : Val)
+  | pop
+  | close
+
+/-- Queue state: FIFO items (head at front) + a monotone closed flag. -/
+structure QState where
+  items : List Val
+  closed : Bool
+
+/-- Apply one queue op: push appends to the tail, pop drops the head, close is
+idempotent-terminal. -/
+def applyQ (s : QState) : QOp → QState
+  | QOp.push v => { s with items := s.items ++ [v] }
+  | QOp.pop    => { s with items := s.items.tail }
+  | QOp.close  => { s with closed := true }
+
+/-- Apply an op-log run as a left fold (a Delta's queue ops). -/
+def applyQRun (s : QState) (ops : List QOp) : QState := ops.foldl applyQ s
+
+/-- **Queue batch = fold.** Fusing two op runs into one applies them in order — the
+QueueCell op-log analog of `applyOps_append` / `batch_fusion_state`. -/
+theorem applyQRun_append (s : QState) (a b : List QOp) :
+    applyQRun s (a ++ b) = applyQRun (applyQRun s a) b := by
+  simp only [applyQRun]
+  rw [List.foldl_append]
+
+/-- A run of `QueuePush` ops. -/
+def pushRun (vs : List Val) : List QOp := vs.map QOp.push
+
+/-- **Push-run fusion preserves FIFO order and multiplicity.** Fusing a maximal
+same-direction `QueuePush` run appends exactly those values in order to the tail —
+nothing dropped, reordered, or duplicated. This is why a queue fuses (frame-bounded)
+rather than state-supersede coalesces (which would lose the consumption position). -/
+theorem pushRun_preserves_fifo (s : QState) (vs : List Val) :
+    (applyQRun s (pushRun vs)).items = s.items ++ vs := by
+  induction vs generalizing s with
+  | nil => simp [applyQRun, pushRun]
+  | cons v rest ih =>
+    simp only [pushRun, List.map_cons, applyQRun, List.foldl_cons]
+    have hstep : applyQ s (QOp.push v) = { s with items := s.items ++ [v] } := rfl
+    rw [hstep]
+    have hih := ih { s with items := s.items ++ [v] }
+    simp only [applyQRun, pushRun] at hih
+    rw [hih]
+    simp [List.append_assoc]
+
 end LazilyFormal.ReliableSync
