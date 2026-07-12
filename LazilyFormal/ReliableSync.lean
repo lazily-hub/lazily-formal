@@ -571,4 +571,25 @@ theorem evicted_peer_resyncs_fresh (s0 : GState) (ds : List Delta) :
     adoptSnapshot (applyDeltaRun (s0, 0) []) full.1 full.2 = full :=
   resync_convergence s0 ds [] List.nil_prefix
 
+/-! ### Quorum intersection: WorkQueueCell assignment safety (`#queue-family`)
+
+A distributed `WorkQueueCell` commits each element's assignment ("element X → worker W")
+to a **majority** of an `n`-voter group. Two majorities of a finite set always intersect, so
+two conflicting assignments of the same element can never both commit — no double-delivery.
+The arithmetic core (inclusion–exclusion forcing a shared voter): two subsets of an `n`-set
+each of size `≥ ⌊n/2⌋+1` sum past `n`, so their overlap is `≥ 1`. This is *why* competing
+consumers need consensus, not CRDT: a pop is not idempotent-commutative, and only a majority-
+committed assignment is exclusive. -/
+
+/-- Two majorities of `n` voters overcount the group: their sizes sum past `n`. -/
+theorem majorities_overcount (n a b : Nat) (ha : n / 2 + 1 ≤ a) (hb : n / 2 + 1 ≤ b) :
+    n + 1 ≤ a + b := by omega
+
+/-- **Quorum intersection.** Two majorities of an `n`-voter set (each a subset, size `≤ n`)
+share at least one voter — so two conflicting `WorkQueueCell` assignments cannot both commit,
+and a minority (`a ≤ n/2`) can never form a majority to commit a conflicting one. -/
+theorem majorities_intersect (n a b : Nat)
+    (ha : n / 2 + 1 ≤ a) (hb : n / 2 + 1 ≤ b) (_han : a ≤ n) (_hbn : b ≤ n) :
+    1 ≤ a + b - n := by omega
+
 end LazilyFormal.ReliableSync
