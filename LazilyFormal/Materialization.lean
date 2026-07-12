@@ -1,28 +1,32 @@
 /-
-! ReactiveFamily materialization — formal model (eager default / lazy opt-in).
+! Materialization — formal model (caller-provided recipe; eager default / lazy opt-in).
 
-`lazily-spec/cell-model.md` § "Materialization mode" fixes an axis orthogonal to
-cell *kind*: **when a derived cell's backing node is allocated**, not what it
-computes. It is the materialization axis of a **`ReactiveFamily`** — the unified
-keyed family whose entries are either **input cells** (a `CellHandle`, always
-materialized) or **derived slots** (a `SlotHandle`, materialized eagerly or
-lazily). Entry *kind* (`EntryKind.cell` / `EntryKind.slot`, below) is exactly the
-handle-kind axis the Rust `ReactiveFamily<K, V, H>` abstracts over, and it is
-orthogonal to `Mode`: choosing lazy defers only `slot` entries, never `cell`
-ones (`cell_entries_materialized_in_every_mode`).
+`lazily-spec/cell-model.md` § "Materialization" fixes an axis orthogonal to cell
+*kind*: **when a derived cell's backing node is allocated**, not what it computes.
+Materialization is a **caller-provided recipe** — a keyed collection plus a per-key
+factory whose *return type* is the choice: an **input cell** or eager **signal**
+(always materialized) vs a lazy **slot** (`SlotHandle`, allocated on first observe).
+It is *not* a bespoke primitive; a binding MAY package it as a convenience
+`ReactiveFamily<K, V, H>`, but what conforms is the observable behavior below, not
+any type. (This recipe framing exists because pinning a *type* let one binding —
+`lazily-zig`'s spreadsheet benchmark — diverge; pinning the *behavior* here and in
+the fixtures is what keeps implementations convergent.)
 
-Two modes govern the derived (`slot`) entries:
+Entry *kind* (`EntryKind.cell` / `EntryKind.slot`, below) is the handle-kind axis,
+orthogonal to `Mode`: choosing lazy defers only `slot` entries, never `cell` ones
+(`cell_entries_materialized_in_every_mode`). Two choices govern the derived (`slot`)
+entries:
 
 - **Eager (default)** — every derived node is allocated at build time (the shared
   high-performance core; a read is a direct node access).
-- **Lazy (opt-in)** — a derived node is allocated on its *first read* ("materialize
-  on pull"), keyed rather than handle-addressed; never-read derived cells are
+- **Lazy (opt-in)** — a derived node is allocated on its *first observe* ("materialize
+  on pull"), keyed rather than handle-addressed; never-observed derived cells are
   never allocated. Lazy is a keyed overlay on the eager core, not a second engine.
 
-This module fixes the *contract* that lets the two modes coexist: materialization
-mode is **observationally transparent** — it changes allocation timing and memory,
-never observed values. That is the property no finite fixture suite can establish,
-and the one an implementation must not violate when it adds an opt-in lazy mode.
+This module fixes the *contract* that lets the two coexist: materialization is
+**observationally transparent** — it changes allocation timing and memory, never
+observed values. That is the property no finite fixture suite can establish, and the
+one an implementation must not violate when it offers an opt-in lazy factory.
 
 Like the rest of `LazilyFormal`, values are abstract `Nat` stand-ins: the model
 fixes *when materialization happens*, not how a value is computed. A `Spec` fixes
