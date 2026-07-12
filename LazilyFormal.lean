@@ -28,4 +28,4 @@ import LazilyFormal.QueueCell
 import LazilyFormal.TopicCell
 import LazilyFormal.WorkQueueCell
 import LazilyFormal.ZeroCopyTransport
-import LazilyFormal.GraphReplica
+import LazilyFormal.GraphView

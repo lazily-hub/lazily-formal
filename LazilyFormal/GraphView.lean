@@ -1,23 +1,23 @@
 /-
-! GraphReplica — the consumer-side materialized view (`#lzsync` 3B clean split).
+! GraphView — the consumer-side materialized view (`#lzsync` 3B clean split).
 
 lazily's reactive graph is a *compute* engine (cells + derived slots wired by closures).
 Its cross-process consumers receive materialized *values* (Snapshot/Delta node payloads),
 never the recompute closures — closures don't serialize — so a consumer is a value
-**mirror**, not a reactive graph. `GraphReplica` (lazily-kt/js) is that mirror: fold the
+**mirror**, not a reactive graph. `GraphView` (lazily-kt/js) is that mirror: fold the
 value stream into a queryable node projection.
 
 `ReliableSync.lean` proves the abstract fold (multi-epoch = fold, resync convergence,
 outbox exactly-once) and dedups re-delivery at the *coordinator* by epoch
 (`step_redelivery_noop`, relying on `base_epoch < last_epoch`). This module proves the
-**complementary GraphReplica guarantee: the fold itself is idempotent** — re-applying a
+**complementary GraphView guarantee: the fold itself is idempotent** — re-applying a
 delta's ops reaches the same graph *independent of any epoch dedup*, because each
-`DeltaOp` is a last-write overwrite. So a `GraphReplica` converges under duplicate
+`DeltaOp` is a last-write overwrite. So a `GraphView` converges under duplicate
 delivery as defense-in-depth even if a dedup layer is bypassed or absent.
 -/
 import LazilyFormal.ReliableSync
 
-namespace LazilyFormal.GraphReplica
+namespace LazilyFormal.GraphView
 
 open LazilyFormal.ReliableSync
 
@@ -62,7 +62,7 @@ theorem applyOps_touched_indep (s t : GState) (ops : List Op) (k : Node)
       simp only [applyOp]
       rw [if_pos ho.symm, if_pos ho.symm]
 
-/-- **GraphReplica fold idempotence.** Applying a delta's ops, then re-applying the same
+/-- **GraphView fold idempotence.** Applying a delta's ops, then re-applying the same
 ops (a re-delivered / re-emitted frame), reaches the identical graph — a no-op — with no
 epoch dedup required. The mirror is convergent under duplicate delivery. -/
 theorem applyOps_idempotent (s : GState) (ops : List Op) :
@@ -79,4 +79,4 @@ theorem applyDelta_state_idempotent (s : GState) (d : Delta) :
     applyOps (applyOps s d.ops) d.ops = applyOps s d.ops :=
   applyOps_idempotent s d.ops
 
-end LazilyFormal.GraphReplica
+end LazilyFormal.GraphView
