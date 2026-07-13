@@ -20,6 +20,14 @@ theorem cursor_monotone (store : Store) (ack : Nat) :
     store.cursor ≤ (saveCursor store ack).cursor := by
   simp [saveCursor, Nat.le_max_left]
 
+/-- A serialized write from a stale handle cannot overwrite a newer cursor. -/
+theorem stale_save_cannot_regress (store : Store) {newer older : Nat}
+    (stale : older ≤ newer) :
+    (saveCursor (saveCursor store newer) older).cursor =
+      (saveCursor store newer).cursor := by
+  simp only [saveCursor]
+  exact Nat.max_eq_left (Nat.le_trans stale (Nat.le_max_right _ _))
+
 def prune (store : Store) : Store :=
   { store with frames := ackThrough store.frames store.cursor }
 

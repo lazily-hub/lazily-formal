@@ -147,8 +147,9 @@ signaling:
   idempotence, empty-frontier snapshot round-trip, and equivalence between
   incremental delta application and whole-state merge.
 - **`LazilyFormal/DurableOutboxStore.lean`** — the storage-independent durable
-  outbox protocol. Proves durable cursors are monotone, acknowledged epochs do
-  not reappear after prune/replay, and append-before-ack remains replayable.
+outbox protocol. Proves durable cursors are monotone, serialized stale-handle
+writes cannot regress them, acknowledged epochs do not reappear after
+prune/replay, and append-before-ack remains replayable.
 - **`LazilyFormal/SeqCrdt.lean`** — the move-aware sequence CRDT (`cell-model.md`
   § "Move-aware sequence order"): each element three independent LWW registers
   (value / position / deleted), a move a *single* LWW position reassignment.
