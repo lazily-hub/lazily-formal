@@ -162,6 +162,10 @@ signaling:
   conformance points 6, 7, and the disposal clause of point 3; the
   concurrency-specific properties (waiter cancellation, benign races, compute-
   context dependency tracking) are out of scope per the spec (`async.md:236`).
+- **`LazilyFormal/TopicCell.lean`** — the broadcast topic model: one append log,
+  independent non-destructive durable cursors, ephemeral session cursors that do
+  not hold retention, atomic snapshot/restore, and GC at the slowest durable
+  cursor. Backs `lazily-spec/conformance/collections/topiccell_*.json`.
 - **`LazilyFormal/Receipt.lean`** — the causal receipt projection
   (`lazily-spec/protocol.md` § "Causal Receipts"): duplicate receipt ids are
   idempotent, stale generations are discarded, `observed` / `accepted` are
@@ -376,6 +380,20 @@ entries are input cells (`EntryKind.cell`, a `CellHandle`) or derived slots
   affect the current projection.
 - `distinct_terminal_conflicts` — conflicting terminal outcomes fail closed.
 
+**Broadcast topic (`TopicCell`) — durable multi-cursor fan-out**
+- `broadcast_delivery` / `publish_visible_to_new_durable` — one publish is
+  independently visible to every subscriber without an assignment decision.
+- `advance_preserves_elements` / `advance_preserves_other_readStream` — a read is
+  non-destructive and advances only that subscriber; `advance_at_end_noop` keeps
+  cursors bounded at an empty tail.
+- `restore_snapshot` / `restart_preserves_cursor` — an atomic durable snapshot
+  recovers the log and every subscriber cursor across restart.
+- `minCursor_le_cursor` / `gc_at_min_preserves_readStream` — the slowest durable
+  cursor is the retention frontier; collecting below it preserves every future
+  durable read.
+- `state_conflation_effect_lossless` — a lagging state-topic subscriber may keep
+  only the newest value without changing the final LWW effect.
+
 **Reliable sync (`ReliableSync`) — gap recovery, at-least-once outbox, multi-epoch delta, liveness (`#lzsync`)**
 - `multi_epoch_apply_eq_fold` (`multi_epoch_apply_eq_fold_state`) — a coalesced
   multi-epoch-span `Delta` (`epoch > base_epoch + 1`, N ops) produces the same
@@ -425,6 +443,7 @@ of the element set. Every compute layer that has a pure-machine core is modeled:
 | Keyed cell collections (`CellMap`/`CellTree`, reconciliation) | `Collection.lean`, `Tree.lean`, `Reconciliation.lean` | modeled |
 | Memoized semantic tree (`SemTree`) | `SemTree.lean` | modeled |
 | Manufactured identity / stable-id alignment | `StableId.lean` | modeled |
+| Broadcast topic (`TopicCell`) — fan-out, durable cursor restart, retention GC | `TopicCell.lean` | modeled |
 | Free-text character CRDT (`TextCrdt`, base convergence + delta sync) | `TextCrdt.lean`, `TextCrdtSync.lean` | modeled |
 | Move-aware sequence CRDT (`SeqCrdt`) | `SeqCrdt.lean` | modeled |
 | Reactive family sync — membership propagation + materialize-on-ingest + derived-aggregate transparency (`#lzfamilysync`) | `FamilySync.lean` | modeled |

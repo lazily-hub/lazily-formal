@@ -148,8 +148,12 @@ this repo.
   `Closed_then_stays_Closed` (the universal closure invariant — once closed, no
   operation reopens). Bounded-queue (`capacity`/`is_full`) theorems deferred.
   Backs `lazily-spec/conformance/collections/queuecell_*.json`.
-- `LazilyFormal/TopicCell.lean` — broadcast topic stub (structure + key
-  invariants declared, proofs deferred to distributed-queue PRD Phase 3).
+- `LazilyFormal/TopicCell.lean` — broadcast topic (`TopicCell`) with independent
+  durable cursors, bounded non-destructive advance, snapshot/restore cursor
+  persistence, ephemeral cursors outside the retention set, and GC at the slowest
+  durable subscriber. Theorems cover fan-out, cursor isolation, restart persistence,
+  GC read preservation, and effect-lossless state-topic conflation. Backs
+  `lazily-spec/conformance/collections/topiccell_*.json`.
 - `LazilyFormal/WorkQueueCell.lean` — competing-consumer work queue stub
   (structure + delivery-state model + key invariants declared, proofs deferred
   to PRD Phase 2 consensus core).
@@ -176,7 +180,7 @@ graph kernel (Slot/Cell/Signal/Effect) + the keyed collection (CellMap/SlotMap)
 + the ordered tree (CellTree) + the memoized semantic tree (SemTree) + manufactured
 identity (StableId) + the collection-level CRDTs (TextCrdt base + delta sync,
 SeqCrdt) + distributed signaling (peer FSM + roster) + the reactive queue
-(QueueCell; TopicCell/WorkQueueCell stubs); every
+(QueueCell and TopicCell; WorkQueueCell model); every
 `lazily-spec/conformance/collections/*.json` fixture now has an executable
 reference here. lazily-spec owns the wire protocol (IPC Snapshot/Delta, the
 register/`PnCounter`/`CellCrdt` + `CrdtSync` layer, FFI, permission, capability
