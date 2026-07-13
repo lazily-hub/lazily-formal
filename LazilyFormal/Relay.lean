@@ -119,4 +119,32 @@ theorem spill_replay_idempotent (P : MergePolicy T) (hIdem : Idempotent P)
   rw [coalesceSound P s o rest]
   exact hIdem s (coalesce P o rest)
 
+/-! ## Phase 6/8 corollaries — the extra policies reduce to the core theorems -/
+
+/-- **Window policy (debounce/throttle, case 8) converges.** A `WindowPolicy` only
+    chooses *where* the relay flushes — its windows are a flush schedule — so the
+    converged egress is the flat fold regardless of window size. A direct corollary
+    of `relay_converges` (which is `flushGroupingIrrelevant`). -/
+theorem window_converges {T : Type} (P : MergePolicy T) (s0 : T) (windows : Schedule T) :
+    relayEgress P s0 windows = applyOps P s0 (delivered windows) :=
+  relay_converges P s0 windows
+
+/-- **Priority egress / keyed sharding (cases 11, 18) are sound iff commutative.**
+    Both reorder ops; for a commutative policy an adjacent reordering leaves the
+    converged state unchanged. A direct corollary of `reorder_adjacent`. -/
+theorem priority_reorder_sound {T : Type} (P : MergePolicy T) (hC : Commutative P)
+    (s : T) (a b : T) (rest : List T) :
+    applyOps P s (a :: b :: rest) = applyOps P s (b :: a :: rest) :=
+  reorder_adjacent P hC s a b rest
+
+/-- **`DurableOutbox.coalesce_to_snapshot` is a corollary (Phase 8).** The existing
+    reliable-sync outbox coalesces a run of ops into one snapshot before sending;
+    for any associative policy that snapshot merged downstream equals applying the
+    ops one by one — the pre-existing `coalesce_by_join_sound` specialized, now
+    subsumed by the general relay soundness. -/
+theorem durable_outbox_coalesce_sound {T : Type} (P : MergePolicy T)
+    (s o : T) (rest : List T) :
+    applyOps P s (o :: rest) = P.merge s (coalesce P o rest) :=
+  coalesceSound P s o rest
+
 end LazilyFormal.Relay
