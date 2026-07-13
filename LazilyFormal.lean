@@ -4,6 +4,7 @@ import LazilyFormal.StateChart
 import LazilyFormal.AdStateChart
 import LazilyFormal.Reactive
 import LazilyFormal.Merge
+import LazilyFormal.Relay
 import LazilyFormal.Materialization
 import LazilyFormal.AsyncMaterialization
 import LazilyFormal.ThreadSafe
