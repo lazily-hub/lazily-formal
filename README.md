@@ -21,7 +21,7 @@ binding (`lazily-rs`, `lazily-py`, `lazily-kt`, `lazily-js`, `lazily-dart`,
 `lazily-zig`, `lazily-go`, `lazily-cpp`). Legend: ✅ shipped · `~` partial · `—` absent or not applicable.
 This table is generated from [`lazily-spec/coverage.json`](../lazily-spec/coverage.json)
 — the canonical matrix with per-cell notes and platform carve-outs lives in
-lazily-spec's [Cross-Language Coverage](../lazily-spec/docs/coverage.md). It is
+lazily-spec's [Cross-Language Coverage](https://github.com/lazily-hub/lazily-spec/blob/main/docs/coverage.md). It is
 kept in sync by lazily-spec's `scripts/sync-coverage.mjs`; run `make coverage-sync`
 in `lazily-spec` after editing `coverage.json`.
 
@@ -173,10 +173,11 @@ prune/replay, and append-before-ack remains replayable.
   conformance points 6, 7, and the disposal clause of point 3; the
   concurrency-specific properties (waiter cancellation, benign races, compute-
   context dependency tracking) are out of scope per the spec (`async.md:236`).
-- **`LazilyFormal/TopicCell.lean`** — the broadcast topic model: one append log,
-  independent non-destructive durable cursors, ephemeral session cursors that do
-  not hold retention, atomic snapshot/restore, and GC at the slowest durable
-  cursor. Backs `lazily-spec/conformance/collections/topiccell_*.json`.
+- **`LazilyFormal/TopicCell.lean`** — the broadcast topic model: an absolute
+`baseOffset` plus retained append log, independent non-destructive durable and
+ephemeral subscriptions, connected-session read/advance bounds, atomic
+snapshot/restore, and cursor-preserving GC at the slowest durable cursor. Backs
+`lazily-spec/conformance/collections/topiccell_*.json`.
 - **`LazilyFormal/Receipt.lean`** — the causal receipt projection
   (`lazily-spec/protocol.md` § "Causal Receipts"): duplicate receipt ids are
   idempotent, stale generations are discarded, `observed` / `accepted` are
@@ -392,16 +393,19 @@ entries are input cells (`EntryKind.cell`, a `CellHandle`) or derived slots
 - `distinct_terminal_conflicts` — conflicting terminal outcomes fail closed.
 
 **Broadcast topic (`TopicCell`) — durable multi-cursor fan-out**
-- `broadcast_delivery` / `publish_visible_to_new_durable` — one publish is
-  independently visible to every subscriber without an assignment decision.
+- `broadcast_delivery` / `publish_appends` / `publish_preserves_subscriptions` —
+one publish is independently visible to every subscriber without an assignment
+decision or cursor movement.
 - `advance_preserves_elements` / `advance_preserves_other_readStream` — a read is
-  non-destructive and advances only that subscriber; `advance_at_end_noop` keeps
-  cursors bounded at an empty tail.
+non-destructive and advances only that subscriber; `advance_at_end_noop` keeps
+cursors bounded at an empty tail, while `advance_disconnected_noop` freezes
+offline durable cursors.
 - `restore_snapshot` / `restart_preserves_cursor` — an atomic durable snapshot
-  recovers the log and every subscriber cursor across restart.
-- `minCursor_le_cursor` / `gc_at_min_preserves_readStream` — the slowest durable
-  cursor is the retention frontier; collecting below it preserves every future
-  durable read.
+recovers the log and every subscriber cursor across restart.
+- `retentionFrontier_le_durableCursor` / `gc_preserves_absolute_cursor` /
+`gc_at_min_preserves_readStream` — the slowest durable cursor is the retention
+frontier; collecting below it preserves both absolute cursor identity and every
+future durable read.
 - `state_conflation_effect_lossless` — a lagging state-topic subscriber may keep
   only the newest value without changing the final LWW effect.
 

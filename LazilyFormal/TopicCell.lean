@@ -1,39 +1,26 @@
 /-
-! TopicCell (broadcast) — formal model.
+! TopicCell (broadcast) — absolute-offset formal model.
 
-The formal counterpart of `lazily-spec/cell-model.md` § "The queue family — two axes"
-and § "Future queue primitives → TopicCell". A **broadcast topic**: every subscriber
-receives every pushed element. Each subscriber holds its **own cursor** and reads
-**non-destructively** — one subscriber advancing removes nothing for the others. The
-topic retains an element until every durable cursor has passed it (GC frontier = the
-minimum cursor).
+The executable counterpart of `lazily-spec/cell-model.md` § "TopicCell
+(broadcast)". A topic is a retained append log with an absolute `baseOffset`
+and one stable subscription slot per subscriber id. Every connected subscriber
+reads non-destructively from its own absolute cursor.
 
-Universal properties fixed here:
+This model pins the v1 semantic core:
 
-- **Broadcast delivery**: a subscriber reading from cursor `0` observes the full
-  published sequence (its read-stream = `elements`); every subscriber sees the same
-  full sequence independently (`broadcast_delivery`, `readStreamFrom_zero`).
-- **Non-destructive read**: advancing one subscriber's cursor changes neither
-  `elements` nor any other subscriber's cursor or read-stream
-  (`advance_preserves_elements`, `advance_preserves_other_cursor`,
-  `advance_preserves_other_readStream`).
-- **Slowest-subscriber retention**: elements below the minimum cursor are GC-safe —
-  dropping them (and shifting cursors) leaves every subscriber's future reads
-  unchanged (`gc_preserves_readStream`, `gc_at_min_preserves_readStream`, with the
-  frontier `minCursor_le_cursor`).
-- **State-topic conflation is effect-lossless**: for value/state semantics a
-subscriber that jumps its cursor to the latest element observes the same final
-value as one that read every element — the LWW last-write, analogous to
-`ReliableSync.joinReg` (`state_conflation_effect_lossless`).
-- **Durable lifecycle**: a newly-created durable subscription starts at the
-current tail, cursors never advance beyond the tail, and snapshot/restore preserves
-every durable cursor across subscriber restart (`subscribeDurable_cursor_at_tail`,
-`advance_at_end_noop`, `restore_snapshot`, `restart_preserves_cursor`). Ephemeral
-cursors are caller-owned and therefore do not participate in the retention frontier.
+- publish appends exactly one value and moves no cursor;
+- new subscriptions start at the current absolute tail;
+- disconnected durable cursors are retained and frozen until reconnect;
+- disconnected ephemeral subscriptions are removed;
+- reads and advances are available only while connected, and advancing at the
+  tail is a no-op;
+- the GC frontier is the slowest durable cursor (or the tail when none exist),
+  GC changes `baseOffset` and the retained prefix but never rebases a cursor;
+- snapshot/restore preserves the complete absolute-offset state.
 
-Unlike `QueueCell` (destructive pop, one consumer) a topic distributes with **no
-assignment consensus**: N independent per-subscriber cursor-queues. Total-order
-broadcast (atomic broadcast ≡ consensus) is out of scope here.
+Subscriber ids are list indices in this pure model. `Option.none` is a removed
+ephemeral slot, so later ids remain stable; bindings may use any stable external
+map key.
 -/
 
 import LazilyFormal.Primitive
@@ -41,276 +28,378 @@ import LazilyFormal.Primitive
 namespace LazilyFormal.TopicCell
 
 abbrev Value := Nat
-
-/-- A subscriber cursor: the index of the next element to receive. -/
 abbrev Cursor := Nat
+abbrev SubscriberId := Nat
 
-/-- The state of a broadcast topic (`TopicCell`). -/
+inductive Durability where
+  | durable
+  | ephemeral
+  deriving DecidableEq, Repr
+
+structure Subscription where
+  cursor : Cursor
+  durability : Durability
+  connected : Bool
+  deriving DecidableEq, Repr
+
+/-- A retained broadcast log with stable absolute subscriber cursors. -/
 structure TopicCell where
-  /-- The append-only element log (oldest first). -/
+  baseOffset : Cursor
   elements : List Value
-  /-- Per-durable-subscriber cursors (each subscriber reads independently). Ephemeral
-  session cursors are intentionally caller-owned and absent from this retention set. -/
-  cursors : List Cursor
+  subscriptions : List (Option Subscription)
+  deriving DecidableEq, Repr
 
-/-! ## Publish, read, advance -/
+/-- Absolute offset immediately after the retained log. -/
+def endOffset (t : TopicCell) : Cursor := t.baseOffset + t.elements.length
 
-/-- Publish (broadcast) a value: append it to the log. Cursors are untouched — a
-publish makes an element available to every subscriber without moving any cursor. -/
-def publish (t : TopicCell) (v : Value) : TopicCell :=
-  { t with elements := t.elements ++ [v] }
+/-- Stable lookup; removed or out-of-range ids are absent. -/
+def subscriptionOf (t : TopicCell) (i : SubscriberId) : Option Subscription :=
+  t.subscriptions.getD i none
 
-/-- Subscriber `i`'s cursor (an unsubscribed / out-of-range index reads from `0`). -/
-def cursorOf (t : TopicCell) (i : Nat) : Cursor := t.cursors.getD i 0
+def cursorOf (t : TopicCell) (i : SubscriberId) : Option Cursor :=
+  (subscriptionOf t i).map (·.cursor)
 
-/-- The read-stream from a raw cursor: the not-yet-consumed suffix of the log. -/
-def readStreamFrom (t : TopicCell) (c : Cursor) : List Value := t.elements.drop c
+/-- Read an absolute cursor as an index into the retained suffix. -/
+def readStreamFrom (t : TopicCell) (cursor : Cursor) : List Value :=
+  t.elements.drop (cursor - t.baseOffset)
 
-/-- Subscriber `i`'s read-stream — everything it has not yet read. -/
-def readStream (t : TopicCell) (i : Nat) : List Value := readStreamFrom t (cursorOf t i)
+/-- Unknown and disconnected subscribers have no readable session stream. -/
+def readStream (t : TopicCell) (i : SubscriberId) : List Value :=
+  match subscriptionOf t i with
+  | some sub => if sub.connected then readStreamFrom t sub.cursor else []
+  | none => []
 
-/-- Advance subscriber `i` by one available read (consume one element for that
-subscriber only). At the tail this is a no-op, so a cursor can never be advanced by
-polling an empty topic. -/
-def advance (t : TopicCell) (i : Nat) : TopicCell :=
-if cursorOf t i < t.elements.length then
-  { t with cursors := t.cursors.set i (cursorOf t i + 1) }
-else
-  t
+def setSubscription
+    (t : TopicCell) (i : SubscriberId) (sub : Option Subscription) : TopicCell :=
+  { t with subscriptions := t.subscriptions.set i sub }
 
-/-! ## Subscription lifecycle -/
+/-! ## Publish and subscription lifecycle -/
 
-/-- The stable id allocated to the next durable subscriber. Subscriber ids are list
-indices in the pure model; bindings may use any stable external key. -/
-def nextSubscriberId (t : TopicCell) : Nat := t.cursors.length
+/-- Publish exactly one value without changing the absolute origin or cursors. -/
+def publish (t : TopicCell) (value : Value) : TopicCell :=
+  { t with elements := t.elements ++ [value] }
 
-/-- Register a durable subscriber at the current tail. It receives future publishes,
-and its cursor is retained in topic state while it is offline. -/
-def subscribeDurable (t : TopicCell) : TopicCell :=
-{ t with cursors := t.cursors ++ [t.elements.length] }
+def nextSubscriberId (t : TopicCell) : SubscriberId := t.subscriptions.length
 
-/-- An ephemeral subscription owns only a connected-session cursor. It starts at the
-current tail, is not stored in `TopicCell`, and therefore never holds back GC. -/
-def subscribeEphemeral (t : TopicCell) : Cursor := t.elements.length
+/-- Allocate a new stable id at the current tail. -/
+def subscribe (t : TopicCell) (durability : Durability) : TopicCell :=
+  { t with subscriptions := t.subscriptions ++ [some {
+      cursor := endOffset t
+      durability := durability
+      connected := true
+    }] }
 
-/-- Persisted state required to recover durable subscriptions after process restart. -/
-structure DurableSnapshot where
-elements : List Value
-cursors : List Cursor
+def subscribeDurable (t : TopicCell) : TopicCell := subscribe t .durable
+def subscribeEphemeral (t : TopicCell) : TopicCell := subscribe t .ephemeral
 
-/-- Capture the append log and every durable cursor atomically. -/
-def snapshot (t : TopicCell) : DurableSnapshot :=
-{ elements := t.elements, cursors := t.cursors }
+/-- Reconnect only an existing durable id, preserving its cursor. -/
+def reconnect (t : TopicCell) (i : SubscriberId) : TopicCell :=
+  match subscriptionOf t i with
+  | some sub =>
+      match sub.durability with
+      | .durable =>
+          if sub.connected then t
+          else setSubscription t i (some { sub with connected := true })
+      | .ephemeral => t
+  | none => t
 
-/-- Restore a topic from its durable snapshot. -/
-def restore (s : DurableSnapshot) : TopicCell :=
-{ elements := s.elements, cursors := s.cursors }
+/-- Durable disconnect persists an offline cursor; ephemeral disconnect removes
+the record while retaining the stable id slot. -/
+def disconnect (t : TopicCell) (i : SubscriberId) : TopicCell :=
+  match subscriptionOf t i with
+  | some sub =>
+      match sub.durability with
+      | .durable => setSubscription t i (some { sub with connected := false })
+      | .ephemeral => setSubscription t i none
+  | none => t
 
-theorem publish_appends (t : TopicCell) (v : Value) :
-    (publish t v).elements = t.elements ++ [v] := rfl
+/-- Move only a connected cursor by one available element. Unknown ids,
+disconnected ids, and cursors at the tail are no-ops. -/
+def advance (t : TopicCell) (i : SubscriberId) : TopicCell :=
+  match subscriptionOf t i with
+  | some sub =>
+      if sub.connected then
+        if sub.cursor < endOffset t then
+          setSubscription t i (some { sub with cursor := sub.cursor + 1 })
+        else t
+      else t
+  | none => t
 
-/-- **Publish does not move any cursor.** Availability of a new element is independent
-of consumption progress — every subscriber decides when to advance. -/
-theorem publish_preserves_cursors (t : TopicCell) (v : Value) :
-(publish t v).cursors = t.cursors := rfl
+/-- Atomic state used for process restart. -/
+structure Snapshot where
+  baseOffset : Cursor
+  elements : List Value
+  subscriptions : List (Option Subscription)
+  deriving DecidableEq, Repr
 
-/-- A durable subscriber is created at the current tail, so historical elements are
-not replayed merely by creating a new subscription. -/
+def snapshot (t : TopicCell) : Snapshot :=
+  { baseOffset := t.baseOffset, elements := t.elements,
+    subscriptions := t.subscriptions }
+
+def restore (saved : Snapshot) : TopicCell :=
+  { baseOffset := saved.baseOffset, elements := saved.elements,
+    subscriptions := saved.subscriptions }
+
+theorem publish_appends (t : TopicCell) (value : Value) :
+    (publish t value).elements = t.elements ++ [value] := rfl
+
+theorem publish_preserves_baseOffset (t : TopicCell) (value : Value) :
+    (publish t value).baseOffset = t.baseOffset := rfl
+
+theorem publish_preserves_subscriptions (t : TopicCell) (value : Value) :
+    (publish t value).subscriptions = t.subscriptions := rfl
+
+theorem subscribe_cursor_at_tail (t : TopicCell) (durability : Durability) :
+    cursorOf (subscribe t durability) (nextSubscriberId t) = some (endOffset t) := by
+  simp [cursorOf, subscriptionOf, subscribe, nextSubscriberId,
+    List.getD_eq_getElem?_getD]
+
 theorem subscribeDurable_cursor_at_tail (t : TopicCell) :
-cursorOf (subscribeDurable t) (nextSubscriberId t) = t.elements.length := by
-  simp [subscribeDurable, nextSubscriberId, cursorOf]
+    cursorOf (subscribeDurable t) (nextSubscriberId t) = some (endOffset t) := by
+  simpa [subscribeDurable] using subscribe_cursor_at_tail t Durability.durable
 
-/-- The first publish after subscribing is visible to the new durable subscriber. -/
-theorem publish_visible_to_new_durable (t : TopicCell) (v : Value) :
-readStream (publish (subscribeDurable t) v) (nextSubscriberId t) = [v] := by
-  simp [readStream, readStreamFrom, publish, subscribeDurable, nextSubscriberId,
-    cursorOf]
-
-/-- A new ephemeral session also starts at the current tail. Because this cursor is
-returned to the caller rather than inserted in `t.cursors`, it does not participate in
-`minCursor`. -/
 theorem subscribeEphemeral_cursor_at_tail (t : TopicCell) :
-subscribeEphemeral t = t.elements.length := rfl
+    cursorOf (subscribeEphemeral t) (nextSubscriberId t) = some (endOffset t) := by
+  simpa [subscribeEphemeral] using subscribe_cursor_at_tail t Durability.ephemeral
 
-/-- Snapshot followed by restore is byte-for-byte topic recovery. -/
+theorem reconnect_durable_offline (t : TopicCell) (i : SubscriberId)
+    (sub : Subscription) (hsub : subscriptionOf t i = some sub)
+    (hdur : sub.durability = .durable) (hoffline : sub.connected = false) :
+    reconnect t i = setSubscription t i (some { sub with connected := true }) := by
+  simp [reconnect, hsub, hdur, hoffline]
+
+theorem disconnect_durable_persists (t : TopicCell) (i : SubscriberId)
+    (sub : Subscription) (hsub : subscriptionOf t i = some sub)
+    (hdur : sub.durability = .durable) :
+    disconnect t i = setSubscription t i (some { sub with connected := false }) := by
+  simp [disconnect, hsub, hdur]
+
+theorem disconnect_ephemeral_removes (t : TopicCell) (i : SubscriberId)
+    (sub : Subscription) (hsub : subscriptionOf t i = some sub)
+    (hdur : sub.durability = .ephemeral) :
+    disconnect t i = setSubscription t i none := by
+  simp [disconnect, hsub, hdur]
+
 theorem restore_snapshot (t : TopicCell) : restore (snapshot t) = t := by
   cases t
   rfl
 
-/-- **Cursor persistence.** Restarting from an atomic snapshot preserves every durable
-subscriber cursor. -/
-theorem restart_preserves_cursor (t : TopicCell) (i : Nat) :
-cursorOf (restore (snapshot t)) i = cursorOf t i := by
+theorem restart_preserves_cursor (t : TopicCell) (i : SubscriberId) :
+    cursorOf (restore (snapshot t)) i = cursorOf t i := by
   rw [restore_snapshot]
 
-/-! ## Broadcast delivery
+/-! ## Connected reads, bounded advance, and cursor isolation -/
 
-Reading from cursor `0` yields the whole published sequence, and any two subscribers
-both at `0` observe the identical full sequence — the defining broadcast property
-(every subscriber receives every element, independently). -/
+theorem readStreamFrom_base (t : TopicCell) :
+    readStreamFrom t t.baseOffset = t.elements := by
+  simp [readStreamFrom]
 
-/-- The read-stream from cursor `0` is exactly the full published log. -/
-theorem readStreamFrom_zero (t : TopicCell) : readStreamFrom t 0 = t.elements := rfl
+theorem disconnected_read_empty (t : TopicCell) (i : SubscriberId)
+    (sub : Subscription) (hsub : subscriptionOf t i = some sub)
+    (hoffline : sub.connected = false) :
+    readStream t i = [] := by
+  simp [readStream, hsub, hoffline]
 
-/-- **Broadcast delivery.** Any subscriber whose cursor is at `0` observes the full
-published sequence, and two such subscribers observe the *same* sequence — each sees
-every element, independently of the other. -/
-theorem broadcast_delivery (t : TopicCell) (i j : Nat)
-    (hi : cursorOf t i = 0) (hj : cursorOf t j = 0) :
-    readStream t i = t.elements ∧
-    readStream t j = t.elements ∧
-    readStream t i = readStream t j := by
-  refine ⟨?_, ?_, ?_⟩
-  · simp only [readStream, readStreamFrom, hi, List.drop_zero]
-  · simp only [readStream, readStreamFrom, hj, List.drop_zero]
-  · simp only [readStream, readStreamFrom, hi, hj]
+theorem connected_read_at_base (t : TopicCell) (i : SubscriberId)
+    (sub : Subscription) (hsub : subscriptionOf t i = some sub)
+    (hconnected : sub.connected = true) (hcursor : sub.cursor = t.baseOffset) :
+    readStream t i = t.elements := by
+  simp [readStream, hsub, hconnected, readStreamFrom, hcursor]
 
-/-! ## Non-destructive read
+theorem broadcast_delivery (t : TopicCell) (i j : SubscriberId)
+    (si sj : Subscription)
+    (hsi : subscriptionOf t i = some si) (hsj : subscriptionOf t j = some sj)
+    (hci : si.connected = true) (hcj : sj.connected = true)
+    (hcursorI : si.cursor = t.baseOffset) (hcursorJ : sj.cursor = t.baseOffset) :
+    readStream t i = t.elements ∧ readStream t j = t.elements ∧
+      readStream t i = readStream t j := by
+  have hi := connected_read_at_base t i si hsi hci hcursorI
+  have hj := connected_read_at_base t j sj hsj hcj hcursorJ
+  exact ⟨hi, hj, hi.trans hj.symm⟩
 
-A `TopicCell` subscriber reads by cursor and removes nothing: advancing subscriber `i`
-changes neither the shared `elements` log nor any *other* subscriber's cursor or
-read-stream. This is the sharp contrast with `QueueCell`'s destructive pop. -/
+theorem advance_preserves_elements (t : TopicCell) (i : SubscriberId) :
+    (advance t i).elements = t.elements := by
+  cases hsub : subscriptionOf t i with
+  | none => simp [advance, hsub]
+  | some sub =>
+      cases hconnected : sub.connected with
+      | false => simp [advance, hsub, hconnected]
+      | true =>
+          by_cases htail : sub.cursor < endOffset t
+          · simp [advance, hsub, hconnected, htail, setSubscription]
+          · simp [advance, hsub, hconnected, htail]
 
-/-- **Advance is non-destructive on the log.** One subscriber consuming an element
-leaves the shared element log intact for everyone else. -/
-theorem advance_preserves_elements (t : TopicCell) (i : Nat) :
-(advance t i).elements = t.elements := by
-  unfold advance
-  split <;> rfl
+theorem advance_preserves_baseOffset (t : TopicCell) (i : SubscriberId) :
+    (advance t i).baseOffset = t.baseOffset := by
+  cases hsub : subscriptionOf t i with
+  | none => simp [advance, hsub]
+  | some sub =>
+      cases hconnected : sub.connected with
+      | false => simp [advance, hsub, hconnected]
+      | true =>
+          by_cases htail : sub.cursor < endOffset t
+          · simp [advance, hsub, hconnected, htail, setSubscription]
+          · simp [advance, hsub, hconnected, htail]
 
-/-- Polling at (or beyond) the tail cannot manufacture progress. -/
-theorem advance_at_end_noop (t : TopicCell) (i : Nat)
-    (h : t.elements.length ≤ cursorOf t i) :
+theorem advance_disconnected_noop (t : TopicCell) (i : SubscriberId)
+    (sub : Subscription) (hsub : subscriptionOf t i = some sub)
+    (hoffline : sub.connected = false) :
     advance t i = t := by
-  simp only [advance, Nat.not_lt.mpr h, ↓reduceIte]
+  simp [advance, hsub, hoffline]
 
-/-- **Advance is local to subscriber `i`.** Advancing subscriber `i`'s cursor does not
-touch any other subscriber `j`'s cursor. -/
-theorem advance_preserves_other_cursor (t : TopicCell) (i j : Nat) (h : i ≠ j) :
-cursorOf (advance t i) j = cursorOf t j := by
-  unfold advance
-  split
-  · simp only [cursorOf, List.getD_eq_getElem?_getD, List.getElem?_set_ne h]
-  · rfl
+theorem advance_at_end_noop (t : TopicCell) (i : SubscriberId)
+    (sub : Subscription) (hsub : subscriptionOf t i = some sub)
+    (hend : sub.cursor = endOffset t) :
+    advance t i = t := by
+  cases hconnected : sub.connected <;> simp [advance, hsub, hconnected, hend]
 
-/-- **Advance preserves other subscribers' reads.** A slow subscriber advancing does
-not change any other subscriber's read-stream — failure / lag is isolated per
-subscription. -/
-theorem advance_preserves_other_readStream (t : TopicCell) (i j : Nat) (h : i ≠ j) :
-    readStream (advance t i) j = readStream t j := by
-  simp only [readStream, readStreamFrom, advance_preserves_elements,
-    advance_preserves_other_cursor t i j h]
+theorem subscriptionOf_set_ne (t : TopicCell) (i j : SubscriberId)
+    (sub : Option Subscription) (h : i ≠ j) :
+    subscriptionOf (setSubscription t i sub) j = subscriptionOf t j := by
+  simp [subscriptionOf, setSubscription, List.getD_eq_getElem?_getD,
+    List.getElem?_set_ne h]
 
-/-! ## Slowest-subscriber retention (GC frontier = min cursor)
+theorem advance_preserves_other_subscription (t : TopicCell) (i j : SubscriberId)
+    (h : i ≠ j) : subscriptionOf (advance t i) j = subscriptionOf t j := by
+  cases hsub : subscriptionOf t i with
+  | none => simp [advance, hsub]
+  | some sub =>
+      cases hconnected : sub.connected with
+      | false => simp [advance, hsub, hconnected]
+      | true =>
+          by_cases htail : sub.cursor < endOffset t
+          · simpa [advance, hsub, hconnected, htail] using
+              subscriptionOf_set_ne t i j
+                (some { sub with cursor := sub.cursor + 1 }) h
+          · simp [advance, hsub, hconnected, htail]
 
-The topic retains an element until every cursor has passed it. Elements strictly below
-the minimum cursor are collectable: dropping the first `k ≤ min` elements and shifting
-every cursor down by `k` leaves each subscriber's future read-stream identical. -/
+theorem advance_preserves_other_cursor (t : TopicCell) (i j : SubscriberId)
+    (h : i ≠ j) : cursorOf (advance t i) j = cursorOf t j := by
+  simp [cursorOf, advance_preserves_other_subscription t i j h]
 
-/-- Garbage-collect the first `k` elements: drop them from the log and shift every
-cursor down by `k` (the retained log re-based at the new origin). -/
-def gc (t : TopicCell) (k : Nat) : TopicCell :=
-  { elements := t.elements.drop k,
-    cursors := t.cursors.map (· - k) }
+theorem advance_preserves_other_readStream (t : TopicCell) (i j : SubscriberId)
+    (h : i ≠ j) : readStream (advance t i) j = readStream t j := by
+  simp [readStream, advance_preserves_other_subscription t i j h,
+    advance_preserves_elements, advance_preserves_baseOffset, readStreamFrom]
 
-/-- The retention identity: dropping a GC prefix of size `k ≤ c` and reading from the
-shifted cursor `c - k` yields the same suffix as reading from `c` on the full log —
-GC below a cursor is invisible to that cursor's reads. -/
-theorem gc_preserves_readStream_core (l : List Value) (c k : Nat) (h : k ≤ c) :
-    (l.drop k).drop (c - k) = l.drop c := by
-  rw [List.drop_drop]
-  congr 1
-  omega
+/-! ## Durable retention and absolute-offset GC -/
 
-/-- After GC of `k`, subscriber `i` (in range) sits at `cursorOf t i - k`. -/
-theorem cursorOf_gc (t : TopicCell) (i k : Nat) (h : i < t.cursors.length) :
-    cursorOf (gc t k) i = cursorOf t i - k := by
-  simp only [cursorOf, gc, List.getD_eq_getElem?_getD, List.getElem?_map,
-    List.getElem?_eq_getElem h, Option.map_some, Option.getD_some]
+def durableCursors (t : TopicCell) : List Cursor :=
+  t.subscriptions.filterMap fun slot =>
+    match slot with
+    | some sub =>
+        match sub.durability with
+        | .durable => some sub.cursor
+        | .ephemeral => none
+    | none => none
 
-/-- **Retention is read-preserving below a cursor.** GC of any `k ≤ cursorOf t i`
-leaves subscriber `i`'s read-stream unchanged. -/
-theorem gc_preserves_readStream (t : TopicCell) (i k : Nat)
-    (hi : i < t.cursors.length) (hk : k ≤ cursorOf t i) :
-    readStream (gc t k) i = readStream t i := by
-  simp only [readStream, readStreamFrom, cursorOf_gc t i k hi]
-  show (t.elements.drop k).drop (cursorOf t i - k) = t.elements.drop (cursorOf t i)
-  exact gc_preserves_readStream_core t.elements (cursorOf t i) k hk
+/-- Slowest durable absolute cursor, or the tail when no durable cursor exists. -/
+def retentionFrontier (t : TopicCell) : Cursor :=
+  (durableCursors t).foldl min (endOffset t)
 
-/-- `foldl min` never exceeds its seed. -/
-theorem foldl_min_le_start (a : Nat) (l : List Nat) : l.foldl min a ≤ a := by
-  induction l generalizing a with
+/-- Safe GC drops the prefix below the durable frontier, advances the absolute
+origin, and leaves every subscription record byte-for-byte unchanged. -/
+def gc (t : TopicCell) : TopicCell :=
+  let frontier := retentionFrontier t
+  let remove := frontier - t.baseOffset
+  { t with baseOffset := frontier, elements := t.elements.drop remove }
+
+theorem gc_preserves_subscriptions (t : TopicCell) :
+    (gc t).subscriptions = t.subscriptions := rfl
+
+theorem gc_preserves_subscription (t : TopicCell) (i : SubscriberId) :
+    subscriptionOf (gc t) i = subscriptionOf t i := rfl
+
+theorem gc_preserves_absolute_cursor (t : TopicCell) (i : SubscriberId) :
+    cursorOf (gc t) i = cursorOf t i := rfl
+
+theorem foldl_min_le_start (a : Nat) (values : List Nat) :
+    values.foldl min a ≤ a := by
+  induction values generalizing a with
   | nil => exact Nat.le_refl a
-  | cons x xs ih =>
-    simp only [List.foldl_cons]
-    exact Nat.le_trans (ih (min a x)) (Nat.min_le_left a x)
+  | cons value rest ih =>
+      exact Nat.le_trans (ih (min a value)) (Nat.min_le_left a value)
 
-/-- `foldl min` is a lower bound of every element it folds over. -/
-theorem foldl_min_le_of_mem : ∀ (a x : Nat) (l : List Nat), x ∈ l → l.foldl min a ≤ x := by
-  intro a x l
-  induction l generalizing a with
+theorem foldl_min_le_of_mem : ∀ (a value : Nat) (values : List Nat),
+    value ∈ values → values.foldl min a ≤ value := by
+  intro a value values
+  induction values generalizing a with
   | nil => intro h; cases h
-  | cons y ys ih =>
-    intro h
-    simp only [List.foldl_cons]
-    rcases List.mem_cons.mp h with he | hm
-    · subst he
-      exact Nat.le_trans (foldl_min_le_start (min a x) ys) (Nat.min_le_right a x)
-    · exact ih (min a y) hm
+  | cons head tail ih =>
+      intro h
+      rcases List.mem_cons.mp h with he | hm
+      · subst he
+        exact Nat.le_trans (foldl_min_le_start (min a value) tail)
+          (Nat.min_le_right a value)
+      · exact ih (min a head) hm
 
-/-- The GC frontier: the minimum cursor over all durable subscribers (seeded at the log
-length, so a topic with no durable subscribers may collect everything). Below this
-frontier no durable cursor has any un-read element, so those elements are
-retention-collectable. -/
-def minCursor (t : TopicCell) : Cursor := t.cursors.foldl min (t.elements.length)
+theorem retentionFrontier_le_durableCursor (t : TopicCell) (cursor : Cursor)
+    (h : cursor ∈ durableCursors t) : retentionFrontier t ≤ cursor :=
+  foldl_min_le_of_mem (endOffset t) cursor (durableCursors t) h
 
-/-- Subscriber `i`'s cursor is a member of the cursor list (in range). -/
-theorem cursorOf_mem (t : TopicCell) (i : Nat) (h : i < t.cursors.length) :
-    cursorOf t i ∈ t.cursors := by
-  have he : cursorOf t i = t.cursors[i] := by
-    simp only [cursorOf, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem h,
-      Option.getD_some]
-  rw [he]
-  exact List.getElem_mem h
+theorem no_durable_frontier_is_tail (t : TopicCell)
+    (h : durableCursors t = []) : retentionFrontier t = endOffset t := by
+  simp [retentionFrontier, h]
 
-/-- **The frontier bounds every subscriber.** `minCursor` is `≤` every in-range
-subscriber's cursor — so GC at `minCursor` is safe for all of them at once. -/
-theorem minCursor_le_cursor (t : TopicCell) (i : Nat) (h : i < t.cursors.length) :
-    minCursor t ≤ cursorOf t i :=
-  foldl_min_le_of_mem (t.elements.length) (cursorOf t i) t.cursors (cursorOf_mem t i h)
+theorem ephemeral_head_does_not_hold_frontier (t : TopicCell) (sub : Subscription)
+    (h : sub.durability = .ephemeral) :
+    durableCursors { t with subscriptions := some sub :: t.subscriptions } =
+      durableCursors t := by
+  simp [durableCursors, h]
 
-/-- **Slowest-subscriber retention.** GC at the minimum cursor preserves *every*
-subscriber's read-stream: the slowest cursor sets the GC frontier and nothing any
-subscriber can still read is dropped. -/
-theorem gc_at_min_preserves_readStream (t : TopicCell) (i : Nat)
-    (hi : i < t.cursors.length) :
-    readStream (gc t (minCursor t)) i = readStream t i :=
-  gc_preserves_readStream t i (minCursor t) hi (minCursor_le_cursor t i hi)
+/-- Dropping an absolute prefix below `cursor` and reading relative to the new
+origin yields the same suffix as before GC. -/
+theorem gc_preserves_readStream_core
+    (elements : List Value) (base frontier cursor : Cursor)
+    (hbase : base ≤ frontier) (hcursor : frontier ≤ cursor) :
+    (elements.drop (frontier - base)).drop (cursor - frontier) =
+      elements.drop (cursor - base) := by
+  have hoffsets : (frontier - base) + (cursor - frontier) = cursor - base := by
+    have hfrontier : frontier - base + base = frontier := Nat.sub_add_cancel hbase
+    have hcursorFrontier : cursor - frontier + frontier = cursor :=
+      Nat.sub_add_cancel hcursor
+    have hcursorBase : cursor - base + base = cursor :=
+      Nat.sub_add_cancel (Nat.le_trans hbase hcursor)
+    exact Nat.add_right_cancel (by
+      calc
+        ((frontier - base) + (cursor - frontier)) + base =
+            (cursor - frontier) + ((frontier - base) + base) := by ac_rfl
+        _ = (cursor - frontier) + frontier := by rw [hfrontier]
+        _ = cursor := hcursorFrontier
+        _ = (cursor - base) + base := hcursorBase.symm)
+  rw [List.drop_drop, hoffsets]
 
-/-! ## State-topic conflation is effect-lossless
+theorem gc_preserves_readStream (t : TopicCell) (cursor : Cursor)
+    (hbase : t.baseOffset ≤ retentionFrontier t)
+    (hcursor : retentionFrontier t ≤ cursor) :
+    readStreamFrom (gc t) cursor = readStreamFrom t cursor := by
+  simpa [gc, readStreamFrom] using
+    gc_preserves_readStream_core t.elements t.baseOffset
+      (retentionFrontier t) cursor hbase hcursor
 
-For a **state topic** (each element is a fresh value that supersedes the last) old
-elements are worthless once superseded, so a lagging subscriber may **conflate to
-latest** — jump its cursor over the intermediates straight to the newest element — and
-observe the identical final value as a subscriber that read every element. This is the
-LWW last-write / fold-to-last, the per-subscriber analog of `ReliableSync.joinReg`. -/
+theorem gc_at_min_preserves_readStream (t : TopicCell) (i : SubscriberId)
+    (sub : Subscription) (hsub : subscriptionOf t i = some sub)
+    (hconnected : sub.connected = true)
+    (hbase : t.baseOffset ≤ retentionFrontier t)
+    (hcursor : retentionFrontier t ≤ sub.cursor) :
+    readStream (gc t) i = readStream t i := by
+  simp [readStream, gc_preserves_subscription t i, hsub, hconnected]
+  exact gc_preserves_readStream t sub.cursor hbase hcursor
 
-/-- The observed value of a state topic: fold keep-last from `init` (the newest element,
-or `init` for an empty stream). -/
-def lastValue (init : Value) (l : List Value) : Value := l.foldl (fun _ v => v) init
+/-! ## State-topic conflation -/
 
-/-- Folding keep-last over any prefix then one more element is that element. -/
-theorem lastValue_append_singleton (init : Value) (l : List Value) (v : Value) :
-    lastValue init (l ++ [v]) = v := by
-  simp only [lastValue, List.foldl_append, List.foldl_cons, List.foldl_nil]
+def lastValue (initial : Value) (values : List Value) : Value :=
+  values.foldl (fun _ value => value) initial
 
-/-- **State-topic conflation is effect-lossless.** A subscriber that reads the whole
-stream (fold keep-last from cursor `0`) and one that jumps its cursor to the latest
-element (reading only `[v]`) observe the same final value — the skipped intermediates
-`front` are effect-lossless for value/state semantics. -/
-theorem state_conflation_effect_lossless (init : Value) (front : List Value) (v : Value) :
-    lastValue init (front ++ [v]) = lastValue init [v] := by
-  rw [lastValue_append_singleton]
-  simp only [lastValue, List.foldl_cons, List.foldl_nil]
+theorem lastValue_append_singleton (initial : Value) (values : List Value)
+    (value : Value) : lastValue initial (values ++ [value]) = value := by
+  simp [lastValue, List.foldl_append]
+
+/-- For state/value topics, skipping superseded intermediates preserves the
+final observed value. Event/log topics do not use this policy. -/
+theorem state_conflation_effect_lossless
+    (initial : Value) (front : List Value) (value : Value) :
+    lastValue initial (front ++ [value]) = lastValue initial [value] := by
+  simp [lastValue, List.foldl_append]
 
 end LazilyFormal.TopicCell
