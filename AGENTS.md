@@ -106,6 +106,13 @@ this repo.
   `OpId` sibling comparator is a strict total order ⇒ order is a deterministic
   function of the live set). Backs
   `lazily-spec/conformance/collections/textcrdt_convergence.json`.
+- `LazilyFormal/CrdtTree.lean` — the lossless document contract built on the
+  `TextCrdtSync` join-semilattice. Theorems: `merge_{comm,assoc,idem}`;
+  `snapshot_round_trip` (empty-frontier hydration preserves identity-bearing
+  state); `delta_complete` (incremental exchange equals whole-state merge).
+- `LazilyFormal/DurableOutboxStore.lean` — the storage-independent durable
+  outbox model. Theorems: `cursor_monotone`, `replay_prune_safe`, and
+  `append_before_ack_replays`.
 - `LazilyFormal/SeqCrdt.lean` — the move-aware sequence CRDT
   (`lazily-spec/cell-model.md` § "Move-aware sequence order"): each element three
   independent LWW registers (value / position / deleted), a move a single LWW
