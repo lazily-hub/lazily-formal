@@ -161,9 +161,10 @@ this repo.
   durable subscriber. Theorems cover fan-out, cursor isolation, restart persistence,
   GC read preservation, and effect-lossless state-topic conflation. Backs
   `lazily-spec/conformance/collections/topiccell_*.json`.
-- `LazilyFormal/WorkQueueCell.lean` — competing-consumer work queue stub
-  (structure + delivery-state model + key invariants declared, proofs deferred
-  to PRD Phase 2 consensus core).
+- `LazilyFormal/WorkQueueCell.lean` — competing-consumer work queue safety core:
+  exclusive consensus-committed assignment, identity/worker settlement authority,
+  ack/nack, strict lease expiry + value-preserving redelivery, and bounded poison
+  routing to a dead letter queue. Distributed Raft integration remains in the PRD.
 - `LazilyFormal/ZeroCopyTransport.lean` — the cross-process zero-copy transport
   (`lazily-spec/docs/zero-copy-transport.md`): a backend-agnostic descriptor
   model where a producer spills large payloads to a blob backend (POSIX `shm` /

@@ -28,12 +28,17 @@ Results fixed here:
   redelivery preserves the item's value — eventually delivered, never lost. A **live**
   lease stays `claimed` (`live_lease_stays_claimed`), so no premature double-delivery.
 - **Ack removes / nack requeues** (`ack_not_pending`, `nack_pending`,
-  `queue_ack_removes_pending`, `queue_nack_requeues_pending`): `ack` moves a claimed
-  assignment to `acked` (removed from the pending set); `nack` returns it to `pending`
-  (re-assignable).
+`queue_ack_removes_pending`, `queue_nack_requeues_pending`): `ack` moves a claimed
+assignment to `acked` (removed from the pending set); `nack` returns it to `pending`
+(re-assignable).
+- **Delivery identity / ownership** (`matching_settlement_accepted`,
+  `wrong_delivery_id_rejected`, `wrong_worker_rejected`): only the current delivery ID
+  and owning worker may settle a lease; stale redelivery acks cannot consume new work.
+- **Poison bound / DLQ** (`retry_before_limit_requeues`, `retry_at_limit_deadletters`):
+  failures requeue only below `maxDeliveries`; the limit is terminal dead-letter routing.
 
-Assignment-FIFO is not processing-FIFO, and dead-letter / fairness are further deferred
-lifecycle features (see the spec); the safety core is proven here.
+Assignment-FIFO is not processing-FIFO. Fair scheduling and producer dedup are policy
+extensions (see the spec); the portable lifecycle safety core is proven here.
 -/
 
 import LazilyFormal.Primitive
@@ -66,6 +71,39 @@ most one assignment per element: no double-delivery. -/
 
 /-- An abstract worker/consumer id. -/
 abbrev Worker := Nat
+
+/-- A fresh identity for one lease attempt. Redelivery mints a new delivery id while the
+item value remains stable. -/
+abbrev DeliveryId := Nat
+
+/-- The identity-bearing settlement authority returned by a claim. -/
+structure Delivery where
+id : DeliveryId
+value : Value
+worker : Worker
+attempt : Nat
+deadline : Nat
+
+/-- An ack/nack is authorized only by the exact current delivery id and owning worker. -/
+def acceptsSettlement (d : Delivery) (worker : Worker) (deliveryId : DeliveryId) : Bool :=
+decide (deliveryId = d.id ∧ worker = d.worker)
+
+/-- The current owner settling the current delivery is accepted. -/
+theorem matching_settlement_accepted (d : Delivery) :
+acceptsSettlement d d.worker d.id = true := by
+simp [acceptsSettlement]
+
+/-- A stale delivery id cannot settle a redelivered item. -/
+theorem wrong_delivery_id_rejected (d : Delivery) (worker : Worker) (deliveryId : DeliveryId)
+(h : deliveryId ≠ d.id) :
+acceptsSettlement d worker deliveryId = false := by
+simp [acceptsSettlement, h]
+
+/-- A different worker cannot settle another worker's live lease. -/
+theorem wrong_worker_rejected (d : Delivery) (worker : Worker)
+(h : worker ≠ d.worker) :
+acceptsSettlement d worker d.id = false := by
+simp [acceptsSettlement, h]
 
 /-- One committed assignment: element `element` handed to worker `worker`. -/
 structure Assignment where
@@ -247,7 +285,32 @@ theorem redelivery_preserves_item (l : Lease) (now : Nat) (w' : Nat)
     (_h : l.deadline < now) :
     let e := leaseExpireEntry l now
     (e.1, claimSt w' e.2) = (l.value, DeliveryState.claimed w') := by
-  simp only [leaseExpireEntry, if_pos _h, claimSt]
+simp only [leaseExpireEntry, if_pos _h, claimSt]
+
+/-! ## Poison bound: requeue or dead-letter -/
+
+/-- The portable failure outcome after a nack or expired lease. -/
+inductive RetryDisposition where
+| requeue : RetryDisposition
+| deadLetter : RetryDisposition
+deriving DecidableEq
+
+/-- Requeue below the configured delivery-attempt limit; route to the DLQ at or above it. -/
+def retryDisposition (maxDeliveries attempt : Nat) : RetryDisposition :=
+if attempt < maxDeliveries then .requeue else .deadLetter
+
+/-- A failed attempt below the poison bound remains available for at-least-once delivery. -/
+theorem retry_before_limit_requeues (maxDeliveries attempt : Nat)
+(h : attempt < maxDeliveries) :
+retryDisposition maxDeliveries attempt = .requeue := by
+simp [retryDisposition, h]
+
+/-- Reaching the configured attempt limit is terminal dead-letter routing. -/
+theorem retry_at_limit_deadletters (maxDeliveries attempt : Nat)
+(h : maxDeliveries ≤ attempt) :
+retryDisposition maxDeliveries attempt = .deadLetter := by
+have hn : ¬ attempt < maxDeliveries := Nat.not_lt_of_ge h
+simp [retryDisposition, hn]
 
 /-! ## Closure of the lifecycle
 
@@ -264,7 +327,21 @@ theorem workqueue_delivery_safe :
     (∀ (l : Lease) (now : Nat), l.deadline < now →
       leaseExpireEntry l now = (l.value, DeliveryState.pending)) ∧
     (∀ (l : Lease) (now : Nat), (leaseExpireEntry l now).1 = l.value) :=
-  ⟨no_double_delivery, queue_ack_removes_pending, queue_nack_requeues_pending,
-    expired_lease_redelivers, leaseExpire_preserves_value⟩
+⟨no_double_delivery, queue_ack_removes_pending, queue_nack_requeues_pending,
+expired_lease_redelivers, leaseExpire_preserves_value⟩
+
+/-- The identity and poison-bound clauses complete the portable delivery lifecycle. -/
+theorem workqueue_settlement_safe :
+(∀ d : Delivery, acceptsSettlement d d.worker d.id = true) ∧
+(∀ (d : Delivery) (w : Worker) (id : DeliveryId), id ≠ d.id →
+acceptsSettlement d w id = false) ∧
+(∀ (d : Delivery) (w : Worker), w ≠ d.worker →
+acceptsSettlement d w d.id = false) ∧
+(∀ maxDeliveries attempt, attempt < maxDeliveries →
+retryDisposition maxDeliveries attempt = .requeue) ∧
+(∀ maxDeliveries attempt, maxDeliveries ≤ attempt →
+retryDisposition maxDeliveries attempt = .deadLetter) := by
+exact ⟨matching_settlement_accepted, wrong_delivery_id_rejected, wrong_worker_rejected,
+retry_before_limit_requeues, retry_at_limit_deadletters⟩
 
 end LazilyFormal.WorkQueueCell

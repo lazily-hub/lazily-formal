@@ -42,6 +42,7 @@ in `lazily-spec` after editing `coverage.json`.
 | Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Broadcast topic (`TopicCell`) — independent cursors + durable replay + safe GC (`#lztopiccell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Competing-consumer work queue (`WorkQueueCell`) — exclusive leases + ack/nack + redelivery + DLQ (`#lzworkqueue`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Merge algebra + `MergeCell` — associative `MergePolicy` (`KeepLatest`/`Sum`/`Max`/`SetUnion`/`RawFifo`), `Cell ≡ MergeCell<KeepLatest>`, `Reactive`/`Source` split (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RelayCell — conflating relay + `BackpressurePolicy` + `SpillStore` + `Transport` + Inbox/Outbox + Rate/Window/Expiry/Priority/keyed policies (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -178,6 +179,12 @@ prune/replay, and append-before-ack remains replayable.
 ephemeral subscriptions, connected-session read/advance bounds, atomic
 snapshot/restore, and cursor-preserving GC at the slowest durable cursor. Backs
 `lazily-spec/conformance/collections/topiccell_*.json`.
+- **`LazilyFormal/WorkQueueCell.lean`** — the competing-consumer safety core:
+exclusive committed assignment, delivery-id + worker settlement authority,
+ack/nack, strict lease-expiry redelivery with value preservation, and bounded
+retry-to-DLQ routing. Backs
+`lazily-spec/conformance/collections/workqueue_*.json`; the distributed Raft
+adapter remains an integration layer rather than a pure model.
 - **`LazilyFormal/Receipt.lean`** — the causal receipt projection
   (`lazily-spec/protocol.md` § "Causal Receipts"): duplicate receipt ids are
   idempotent, stale generations are discarded, `observed` / `accepted` are
