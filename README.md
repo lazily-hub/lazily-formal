@@ -28,7 +28,7 @@ in `lazily-spec` after editing `coverage.json`.
 <!-- coverage-table:start -->
 | Feature | Rust | Python | Kotlin | JS | Dart | Zig | Go | C++ |
 | --------- | :----: | :------: | :------: | :--: | :----: | :---: | :--: | :---: |
-| Reactive graph — `Cell` / `Slot` / `Signal` / `Effect` / memo / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Reactive graph — core `Cell` / `Slot` / `Effect` (+ derived `Signal` = `Slot.eager`) / memo / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Keyed-map materialization (`SlotMap`) — mint-on-access derived slots: transparency + deferral (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Thread-safe keyed map (`ThreadSafeSlotMap`) — `Send + Sync` + materialization confluence (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Async keyed map (`AsyncSlotMap`) — eventual transparency (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -68,6 +68,14 @@ in `lazily-spec` after editing `coverage.json`.
 | Permission boundary (`PeerPermissions` / `RemoteOp`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Capability negotiation (`SessionHandshake`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Instrumentation / benchmarks | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Temporal sources — `TimerCell` / `IntervalCell` / `CronCell` / `DeadlineCell` over a logical clock (`#lztime`) | ✅ | — | ✅ | ✅ | — | — | — | — |
+| Rate-shaping operators — `DebounceCell` / `ThrottleCell` / `SampleCell` / `ProbabilisticSampleCell` (`#lzrateshape`) | ✅ | — | ✅ | ✅ | — | — | — | — |
+| Membership + failure detection — `MembershipCell` (SWIM + Phi-accrual) / `PeerSet` / `PeerChangeEvent` (`#lzmemb`) | ✅ | — | ✅ | ✅ | — | — | — | — |
+| Distributed coordination — `LeaseCell` / `LeaderCell` / `LockCell` / `SemaphoreCell` / `BarrierCell`+`QuorumCell` (`#lzcoord`) | ✅ | — | ✅ | ✅ | — | — | — | — |
+| Presence + ephemeral plane — `PresenceCell` / `AwarenessCell` / `EphemeralCell` + `Ephemeral`/`Durable` markers (`#lzpresence`) | ✅ | — | ✅ | ✅ | — | — | — | — |
+| Stream windowing — `TumblingWindow` / `SlidingWindow` / `SessionWindow` over the merge algebra (`#lzwindow`) | ✅ | — | ✅ | ✅ | — | — | — | — |
+| Fault tolerance — `CircuitBreakerCell` / `RetryPolicyCell` / `BulkheadCell` / `TimeoutCell` (`#lzresilience`) | ✅ | — | ✅ | ✅ | — | — | — | — |
+| Embedded-service plane — `HealthCell` / `ReadinessCell` / `DiscoveryCell` / `ServiceRegistry` (`#lzservice`) | ✅ | — | ✅ | ✅ | — | — | — | — |
 <!-- coverage-table:end -->
 
 CRDT convergence and the wire protocol are pinned by the shared conformance fixtures
@@ -460,7 +468,7 @@ of the element set. Every compute layer that has a pure-machine core is modeled:
 
 | lazily-spec compute layer (`MUST`) | lazily-formal module | Status |
 |-------------------------------------|----------------------|--------|
-| Reactive core (Cell / Slot / Effect / Signal) | `Reactive.lean` | modeled |
+| Reactive core (Cell / Slot / Effect; + derived Signal = Slot.eager) | `Reactive.lean` | modeled |
 | SlotMap materialization (eager default / lazy opt-in, `#lzmatmode`) | `Materialization.lean` | modeled (contract; unified cell/slot map); Rust + C++ impls shipped (`SlotMap`) |
 | Keyed cell collections (`CellMap`/`CellTree`, reconciliation) | `Collection.lean`, `Tree.lean`, `Reconciliation.lean` | modeled |
 | Memoized semantic tree (`SemTree`) | `SemTree.lean` | modeled |
