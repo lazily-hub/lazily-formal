@@ -35,6 +35,7 @@ import LazilyFormal.Membership
 import LazilyFormal.Coordination
 import LazilyFormal.Presence
 import LazilyFormal.Windowing
+import LazilyFormal.Resilience
 import LazilyFormal.TopicCell
 import LazilyFormal.WorkQueueCell
 import LazilyFormal.ZeroCopyTransport
