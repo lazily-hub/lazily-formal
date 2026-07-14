@@ -30,6 +30,7 @@ import LazilyFormal.Receipt
 import LazilyFormal.Command
 import LazilyFormal.QueueCell
 import LazilyFormal.Temporal
+import LazilyFormal.RateShape
 import LazilyFormal.TopicCell
 import LazilyFormal.WorkQueueCell
 import LazilyFormal.ZeroCopyTransport
