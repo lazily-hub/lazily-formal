@@ -33,6 +33,7 @@ import LazilyFormal.Temporal
 import LazilyFormal.RateShape
 import LazilyFormal.Membership
 import LazilyFormal.Coordination
+import LazilyFormal.Presence
 import LazilyFormal.TopicCell
 import LazilyFormal.WorkQueueCell
 import LazilyFormal.ZeroCopyTransport
