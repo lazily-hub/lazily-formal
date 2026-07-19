@@ -48,9 +48,9 @@ this repo.
   `recomputeSlot_equal_preserves_dependents` (memo suppression),
   `recomputeSlot_different_invalidates_dependents`,
   `signal_materialized_after_recompute` (a Signal always has a materialized
-  value after its puller runs). Disposal and teardown groups (`#lzspecedgeindex`):
+  value after its puller runs). Disposal and teardown scopes (`#lzspecedgeindex`):
   `disposeNode_detaches_both_directions`, `disposeNode_idempotent`,
-  `disposeGroup_eq_disposeAll` (group teardown = the fold of individual
+  `disposeScope_eq_disposeAll` (scope teardown = the fold of individual
   disposals — cited by name from `lazily-spec/docs/reactive-graph.md`),
   `disposeAll_preserves_nonmember_node` / `disposeAll_preserves_nonmembers`,
   `disposeAll_order_independent`, and

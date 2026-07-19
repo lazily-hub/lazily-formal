@@ -104,7 +104,7 @@ signaling:
 - **`LazilyFormal/Reactive.lean`** — the flat reactive graph kernel: the
   `Slot -> Cell -> Signal -> Effect` family (node kinds, reverse subscription
   edges, the `PartialEq` cell-write guard, the memo-equality suppression guard,
-  eager-`Signal` materialization, explicit disposal and teardown groups). The pure reactive core every binding's
+  eager-`Signal` materialization, explicit disposal and teardown scopes). The pure reactive core every binding's
   `Context` implements, and the layer whose changes surface on the IPC wire as
   `CellSet` / `SlotValue` / `Invalidate`.
 - **`LazilyFormal/ThreadSafe.lean`** — the thread-safe reactive context
@@ -303,16 +303,16 @@ hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent
   *both* directions: the disposed id occurs in no node's dependents list, and
   its own list is empty. The pair is what keeps teardown from leaking.
 - `disposeNode_idempotent` — disposing twice equals disposing once.
-- `disposeGroup_eq_disposeAll` — **ending a teardown group (`child()`) is
-  observationally equal to disposing each member individually**: a group names a
+- `disposeScope_eq_disposeAll` — **ending a teardown scope (`scope()`) is
+  observationally equal to disposing each member individually**: a scope names a
   set and a moment and introduces no disposal semantics of its own (so it
   inherits the single-disposal hazard verbatim). Cited by name from
   `lazily-spec/docs/reactive-graph.md` § "Lifecycle".
 - `disposeAll_preserves_nonmember_node` / `disposeAll_preserves_nonmembers` — a
-  node outside the group keeps its state and its dirty flag; group teardown
+  node outside the scope keeps its state and its dirty flag; scope teardown
   bounds teardown, not visibility.
 - `disposeAll_order_independent` — teardown depends only on the *set* of
-  members, not the order the group recorded them.
+  members, not the order the scope recorded them.
 - `disposeNode_recycled_id_inherits_nothing` — a node minted at a recycled
   (disposed) id starts with an empty reverse-edge set: the model-level form of
   the stale-index aliasing hazard that edge detach at disposal time closes.

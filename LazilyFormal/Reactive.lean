@@ -39,10 +39,10 @@ Proved here:
   state). `Signal = Slot + puller Effect`; universal form of the wire-level
   "changed eager Signal emits `SlotValue`, never bare `Invalidate` for its
   backing slot" invariant.
-- `disposeGroup_eq_disposeAll` and friends — explicit disposal detaches edges in
-  *both* directions, and ending a teardown group (`child()`) is observationally
+- `disposeScope_eq_disposeAll` and friends — explicit disposal detaches edges in
+  *both* directions, and ending a teardown scope (`scope()`) is observationally
   equal to disposing each member individually. See § "Disposal and teardown
-  groups" below.
+  scopes" below.
 
 The guards are total functions of `(graph, node, value)`, so the
 "no churn on equal" guarantee is by construction — but the theorems make it
@@ -354,10 +354,10 @@ theorem signal_materialized_after_recompute
       rw [markDirtyAll_preserves_nonmember_node _ _ _ hnot_self]
       exact hcleared_dirty
 
-/-! ## Disposal and teardown groups
+/-! ## Disposal and teardown scopes
 
 Explicit teardown (`lazily-rs/src/context.rs`: `Context::dispose_slot`,
-`Context::dispose_cell`, `Context::child` / `ChildContext`), specified in
+`Context::dispose_cell`, `Context::scope` / `TeardownScope`), specified in
 `lazily-spec/docs/reactive-graph.md` § "Lifecycle".
 
 Handles are copyable ids, not owners, so dropping every handle to a node
@@ -377,17 +377,17 @@ therefore makes disposal a *graph* operation, not a refcount:
   `.value = some _` is simply unavailable at a disposed id. The model does not
   encode the *throw*; it fixes the observable state that makes reading
   meaningless.
-- **A teardown group is a set and a moment, nothing more.** `Group` records the
-  ids created through it (`ChildContext.owned`), and `disposeGroup` tears the
+- **A teardown scope is a set and a moment, nothing more.** `Scope` records the
+  ids created through it (`TeardownScope.owned`), and `disposeScope` tears the
   whole set down in one pass. The load-bearing theorem is
-  [`disposeGroup_eq_disposeAll`]: that one pass is *observationally equal* to
-  disposing each member individually, so a group can introduce no disposal
-  semantics of its own. Grouping bounds teardown, **not visibility** — the
-  model needs no scoping construct to say so, because reads in this model are
-  plain `Graph.node` lookups unrestricted by group, exactly matching "a child's
+  [`disposeScope_eq_disposeAll`]: that one pass is *observationally equal* to
+  disposing each member individually, so a scope can introduce no disposal
+  semantics of its own. Scoping bounds teardown, **not visibility** — the
+  model needs no visibility construct to say so, because reads in this model are
+  plain `Graph.node` lookups unrestricted by scope, exactly matching "a scope's
   nodes read parent-owned or sibling-owned nodes freely".
-- **The group hazard is the single-disposal hazard.** Since group teardown *is*
-  the fold of single disposals, it inherits the caveat verbatim: ending a group
+- **The scope hazard is the single-disposal hazard.** Since scope teardown *is*
+  the fold of single disposals, it inherits the caveat verbatim: ending a scope
   tears down its nodes even if something outside still reads them.
 
 Proved here:
@@ -395,12 +395,12 @@ Proved here:
 - `disposeNode_detaches_both_directions` — after disposal the id appears in no
   node's dependents list anywhere, and its own list is empty.
 - `disposeNode_idempotent` — disposing twice equals disposing once.
-- `disposeGroup_eq_disposeAll` — group teardown equals the fold of individual
+- `disposeScope_eq_disposeAll` — scope teardown equals the fold of individual
   disposals (cited by name from `lazily-spec/docs/reactive-graph.md`).
 - `disposeAll_preserves_nonmember_node` / `disposeAll_preserves_nonmembers` —
-  a node outside the group keeps its state and its dirty flag.
+  a node outside the scope keeps its state and its dirty flag.
 - `disposeAll_order_independent` — teardown does not depend on the order the
-  group recorded its members.
+  scope recorded its members.
 - `disposeNode_recycled_id_inherits_nothing` — a re-minted node at a disposed
   id starts with an empty reverse-edge set. `dispose_slot` pushes the id onto
   `free_ids`, so a later `computed`/`cell` can land on it; without the edge
@@ -425,22 +425,22 @@ def disposeNode (g : Graph) (id : NodeId) : Graph where
     if n = id then [] else (g.dependents n).filter (fun d => d != id)
 
 /-- Dispose every node in `ids`, folding left to right — the individual-disposal
-    baseline that [`disposeGroup_eq_disposeAll`] measures group teardown
+    baseline that [`disposeScope_eq_disposeAll`] measures scope teardown
     against. Mirrors [`markDirtyAll`]. -/
 def disposeAll (g : Graph) (ids : List NodeId) : Graph :=
   ids.foldl (fun acc d => disposeNode acc d) g
 
-/-- A teardown group (`ChildContext`): the ids created through it. It records
+/-- A teardown scope (`TeardownScope`): the ids created through it. It records
     *only* ids — the node kinds are read back from the graph at teardown — which
-    is why the group needs no disposal logic of its own. -/
-structure Group where
+    is why the scope needs no disposal logic of its own. -/
+structure Scope where
   members : List NodeId
 
-/-- End a teardown group: clear every member and detach every edge touching a
+/-- End a teardown scope: clear every member and detach every edge touching a
     member, in one pass. Deliberately *not* defined as a fold, so that
-    [`disposeGroup_eq_disposeAll`] has content: it is the independent
-    "whole set, one moment" reading of group teardown. -/
-def disposeGroup (g : Graph) (grp : Group) : Graph where
+    [`disposeScope_eq_disposeAll`] has content: it is the independent
+    "whole set, one moment" reading of scope teardown. -/
+def disposeScope (g : Graph) (grp : Scope) : Graph where
   node := fun n => if n ∈ grp.members then disposedState else g.node n
   dependents := fun n =>
     if n ∈ grp.members then []
@@ -469,7 +469,7 @@ theorem disposeNode_detaches_both_directions (g : Graph) (id : NodeId) :
   · simp [disposeNode, h, List.mem_filter]
 
 /-- Disposal is idempotent: a second teardown of the same id is a no-op, so a
-    double `dispose` (or a group whose member list repeats an id) is harmless. -/
+    double `dispose` (or a scope whose member list repeats an id) is harmless. -/
 theorem disposeNode_idempotent (g : Graph) (id : NodeId) :
     disposeNode (disposeNode g id) id = disposeNode g id := by
   refine Graph.ext' (funext fun n => ?_) (funext fun n => ?_)
@@ -479,52 +479,52 @@ theorem disposeNode_idempotent (g : Graph) (id : NodeId) :
     · simp [disposeNode, h, List.filter_filter]
 
 /-- A member list that is empty leaves the graph untouched. -/
-private theorem disposeGroup_nil (g : Graph) : disposeGroup g ⟨[]⟩ = g := by
+private theorem disposeScope_nil (g : Graph) : disposeScope g ⟨[]⟩ = g := by
   refine Graph.ext' (funext fun n => ?_) (funext fun n => ?_) <;>
-    simp [disposeGroup]
+    simp [disposeScope]
 
-/-- Peeling one member off a group teardown is the same as disposing that member
-    first and tearing down the rest — the step that turns the one-pass group
+/-- Peeling one member off a scope teardown is the same as disposing that member
+    first and tearing down the rest — the step that turns the one-pass scope
     definition into the individual-disposal fold. -/
-private theorem disposeGroup_cons (g : Graph) (x : NodeId) (xs : List NodeId) :
-    disposeGroup g ⟨x :: xs⟩ = disposeGroup (disposeNode g x) ⟨xs⟩ := by
+private theorem disposeScope_cons (g : Graph) (x : NodeId) (xs : List NodeId) :
+    disposeScope g ⟨x :: xs⟩ = disposeScope (disposeNode g x) ⟨xs⟩ := by
   refine Graph.ext' (funext fun n => ?_) (funext fun n => ?_)
   · by_cases hxs : n ∈ xs
-    · simp [disposeGroup, disposeNode, hxs]
-    · by_cases hx : n = x <;> simp [disposeGroup, disposeNode, hxs, hx]
+    · simp [disposeScope, disposeNode, hxs]
+    · by_cases hx : n = x <;> simp [disposeScope, disposeNode, hxs, hx]
   · by_cases hxs : n ∈ xs
-    · simp [disposeGroup, disposeNode, hxs]
+    · simp [disposeScope, disposeNode, hxs]
     · by_cases hx : n = x
-      · simp [disposeGroup, disposeNode, hx]
+      · simp [disposeScope, disposeNode, hx]
       · have hcons : n ∉ x :: xs := by simp [hx, hxs]
-        simp only [disposeGroup, disposeNode, if_neg hcons, if_neg hxs, if_neg hx,
+        simp only [disposeScope, disposeNode, if_neg hcons, if_neg hxs, if_neg hx,
           List.filter_filter]
         refine List.filter_congr fun d _ => ?_
         by_cases hdx : d = x <;> simp [hdx]
 
-/-- **Group teardown equals the fold of individual disposals.**
+/-- **Scope teardown equals the fold of individual disposals.**
 
-    Ending a teardown group is observationally equal to disposing each of its
+    Ending a teardown scope is observationally equal to disposing each of its
     members one at a time: the graphs are identical, node for node and edge for
-    edge. A group therefore introduces *no disposal semantics of its own* — it
+    edge. A scope therefore introduces *no disposal semantics of its own* — it
     names a set and a moment, and nothing else. Two consequences the spec leans
-    on: a group cannot be safer than single disposal (it inherits the "tears
+    on: a scope cannot be safer than single disposal (it inherits the "tears
     down nodes something outside may still read" hazard verbatim), and a binding
-    may implement `child()` as a recorded id list plus a teardown loop without
+    may implement `scope()` as a recorded id list plus a teardown loop without
     changing observable behavior.
 
     Cited by name from `lazily-spec/docs/reactive-graph.md` § "Lifecycle". -/
-theorem disposeGroup_eq_disposeAll (g : Graph) (grp : Group) :
-    disposeGroup g grp = disposeAll g grp.members := by
+theorem disposeScope_eq_disposeAll (g : Graph) (grp : Scope) :
+    disposeScope g grp = disposeAll g grp.members := by
   obtain ⟨ms⟩ := grp
   induction ms generalizing g with
-  | nil => simpa [disposeAll] using disposeGroup_nil g
+  | nil => simpa [disposeAll] using disposeScope_nil g
   | cons x xs ih =>
-    show disposeGroup g ⟨x :: xs⟩ = disposeAll g (x :: xs)
-    rw [disposeGroup_cons g x xs, ih (disposeNode g x)]
+    show disposeScope g ⟨x :: xs⟩ = disposeAll g (x :: xs)
+    rw [disposeScope_cons g x xs, ih (disposeNode g x)]
     rfl
 
-/-- Disposing a group leaves a node outside it completely untouched: same kind,
+/-- Disposing a scope leaves a node outside it completely untouched: same kind,
     same value, same memo guard, same dirty flag. Mirrors
     [`markDirtyAll_preserves_nonmember_node`].
 
@@ -534,31 +534,31 @@ theorem disposeGroup_eq_disposeAll (g : Graph) (grp : Group) :
 theorem disposeAll_preserves_nonmember_node
     (g : Graph) (ids : List NodeId) (d : NodeId) (hnmem : d ∉ ids) :
     (disposeAll g ids).node d = g.node d := by
-  rw [← disposeGroup_eq_disposeAll g ⟨ids⟩]
-  simp [disposeGroup, hnmem]
+  rw [← disposeScope_eq_disposeAll g ⟨ids⟩]
+  simp [disposeScope, hnmem]
 
-/-- A node outside a disposed group keeps its dirty flag: teardown of a group
+/-- A node outside a disposed scope keeps its dirty flag: teardown of a scope
     schedules no work anywhere else. -/
 theorem disposeAll_preserves_nonmembers
     (g : Graph) (ids : List NodeId) (d : NodeId) (hnmem : d ∉ ids) :
     ((disposeAll g ids).node d).dirty = (g.node d).dirty :=
   congrArg NodeState.dirty (disposeAll_preserves_nonmember_node g ids d hnmem)
 
-/-- Group teardown depends only on the *set* of members, not on the order or
-    multiplicity in which the group recorded them. Falls out of
-    [`disposeGroup_eq_disposeAll`]: the one-pass definition consults membership
+/-- Scope teardown depends only on the *set* of members, not on the order or
+    multiplicity in which the scope recorded them. Falls out of
+    [`disposeScope_eq_disposeAll`]: the one-pass definition consults membership
     alone, so any two member lists with the same members tear down identically.
 
-    This is what makes `ChildContext.owned` free to be a plain `Vec` appended in
+    This is what makes `TeardownScope.owned` free to be a plain `Vec` appended in
     creation order: reversing it, deduplicating it, or draining it in any order
     yields the same graph. -/
 theorem disposeAll_order_independent
     (g : Graph) (ids ids' : List NodeId) (hmem : ∀ n, n ∈ ids ↔ n ∈ ids') :
     disposeAll g ids = disposeAll g ids' := by
-  rw [← disposeGroup_eq_disposeAll g ⟨ids⟩, ← disposeGroup_eq_disposeAll g ⟨ids'⟩]
+  rw [← disposeScope_eq_disposeAll g ⟨ids⟩, ← disposeScope_eq_disposeAll g ⟨ids'⟩]
   refine Graph.ext' (funext fun n => ?_) (funext fun n => ?_)
-  · simp [disposeGroup, hmem n]
-  · simp only [disposeGroup, hmem n]
+  · simp [disposeScope, hmem n]
+  · simp only [disposeScope, hmem n]
     by_cases h : n ∈ ids'
     · simp [h]
     · simp only [if_neg h]
