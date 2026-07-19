@@ -43,6 +43,10 @@ Proved here:
   *both* directions, and ending a teardown scope (`scope()`) is observationally
   equal to disposing each member individually. See § "Disposal and teardown
   scopes" below.
+- `hybrid_serves_stale_value_at_depth_two` — eager cone marking and lazy pull
+  are each sound, but *combining* one-level marking with a cache-trusting read
+  loses writes at depth 2. A shipped defect in two bindings, reduced to three
+  nodes. See § "Staleness discovery" below.
 
 The guards are total functions of `(graph, node, value)`, so the
 "no churn on equal" guarantee is by construction — but the theorems make it
@@ -581,5 +585,91 @@ theorem disposeNode_recycled_id_inherits_nothing
     (∀ n, id ∉ (setNode (disposeNode g id) id fresh).dependents n) := by
   refine ⟨setNode_eq _, by simp [setNode, disposeNode], fun n => ?_⟩
   simpa only [setNode] using (disposeNode_detaches_both_directions g id).1 n
+
+/-! ## Staleness discovery: why the hybrid strategy is unsound
+
+Two strategies for making a write observable at transitive depth are both
+*correct*, and the family permits either:
+
+- **Eager marking** — a write walks the whole dependent cone and marks every
+  transitive node dirty. Reads then trust the flag.
+- **Lazy pull** — a write marks little or nothing, and every read refreshes its
+  own dependencies recursively before deciding whether to recompute. This is the
+  strategy `reactive-graph.md` describes: "On `get`, a slot first refreshes its
+  own dependencies (recursively, lazy pull), then recomputes only if any
+  dependency actually changed."
+
+`setCell` above implements the second: it marks only *direct* dependents, which
+is sufficient precisely because a read is expected to recurse. That is not an
+incompleteness in this model — it is the lazy strategy, stated.
+
+**The unsound combination is the hybrid**: mark one level eagerly, *and* let
+reads short-circuit on a clean node. Each half is fine; together they lose
+writes at depth 2 and beyond, because the mark never reaches the node and the
+read never looks past it.
+
+This is not hypothetical. It shipped in two bindings and was found on
+2026-07-19 (`lazily-dart` `c91a32a`, `lazily-go` `bdfdbce`). Both tracked async
+slot staleness with a revision counter and a `Resolved` state whose read path
+returned the cached value directly, while their invalidation handler notified
+only the written cell's immediate dependents. A chain `cell -> a -> b` served a
+stale `b` indefinitely. The theorem below is that failure, reduced to three
+nodes. -/
+
+/-- A read that trusts the dirty flag and does **not** refresh dependencies:
+    a clean node serves its cached value. This is the short-circuiting half of
+    the hybrid — `AsyncSlotResolved` in `lazily-go`, `AsyncSlotState.resolved`
+    in `lazily-dart`. -/
+def cachedRead (g : Graph) (id : NodeId) : Option Value :=
+  if (g.node id).dirty then none else (g.node id).value
+
+/-- A three-node chain `0 -> 1 -> 2`: a source cell, a slot reading it, and a
+    slot reading that slot. Values are seeded consistently with `src = v`. -/
+def chain (v : Value) : Graph :=
+  { node := fun n =>
+      if n = 0 then ⟨.cell, some v, none, false⟩
+      else if n = 1 then ⟨.slot, some (v + 10), none, false⟩
+      else if n = 2 then ⟨.slot, some (v + 110), none, false⟩
+      else ⟨.disposed, none, none, false⟩
+  , dependents := fun n =>
+      if n = 0 then [1] else if n = 1 then [2] else [] }
+
+/-- One-level invalidation reaches the direct dependent. -/
+theorem chain_setCell_marks_depth_one :
+    (((setCell (chain 1) 0 2).node 1).dirty) = true := by
+  decide
+
+/-- **It does not reach depth two.** The transitive dependent stays clean. -/
+theorem chain_setCell_leaves_depth_two_clean :
+    (((setCell (chain 1) 0 2).node 2).dirty) = false := by
+  decide
+
+/-- **The hybrid loses the write.** After a source write, a cache-trusting read
+    of the depth-2 node returns the value computed from the *old* source — the
+    graph reports `111`, derived from `src = 1`, when `src` is now `2` and the
+    consistent answer is `112`.
+
+    This is the whole defect. Under lazy pull the same graph is correct, because
+    the read of node 2 would refresh node 1 first and observe the change; under
+    eager cone marking it is correct, because node 2 would carry the dirty flag.
+    Combining "mark one level" with "trust the flag" is what loses the write, and
+    neither half looks wrong in isolation — which is why this shipped twice. -/
+theorem hybrid_serves_stale_value_at_depth_two :
+    cachedRead (setCell (chain 1) 0 2) 2 = some 111 := by
+  decide
+
+/-- Eager marking over the transitive cone repairs it: marking node 1's
+    dependents as well leaves nothing clean to serve a stale read. Stated as the
+    fix actually applied in both bindings — the invalidation walk continues
+    through a dependent slot instead of stopping at it. -/
+theorem cone_marking_reaches_depth_two :
+    ((markDirtyAll (setCell (chain 1) 0 2) ((chain 1).dependents 1)).node 2).dirty = true := by
+  decide
+
+/-- And the repaired graph no longer serves a cached value at depth two — the
+    read must recompute rather than answering from cache. -/
+theorem cone_marking_refuses_stale_read :
+    cachedRead (markDirtyAll (setCell (chain 1) 0 2) ((chain 1).dependents 1)) 2 = none := by
+  decide
 
 end LazilyFormal.Reactive
