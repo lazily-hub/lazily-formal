@@ -48,7 +48,14 @@ this repo.
   `recomputeSlot_equal_preserves_dependents` (memo suppression),
   `recomputeSlot_different_invalidates_dependents`,
   `signal_materialized_after_recompute` (a Signal always has a materialized
-  value after its puller runs).
+  value after its puller runs). Disposal and teardown groups (`#lzspecedgeindex`):
+  `disposeNode_detaches_both_directions`, `disposeNode_idempotent`,
+  `disposeGroup_eq_disposeAll` (group teardown = the fold of individual
+  disposals — cited by name from `lazily-spec/docs/reactive-graph.md`),
+  `disposeAll_preserves_nonmember_node` / `disposeAll_preserves_nonmembers`,
+  `disposeAll_order_independent`, and
+  `disposeNode_recycled_id_inherits_nothing` (a re-minted id starts with an
+  empty edge set).
 - `LazilyFormal/ThreadSafe.lean` — thread-safe reactive context
   (`lazily-spec/protocol.md` § "Concurrency layers are required"): a batch
   flush that serializes concurrent cell writes into one coalesced invalidation

@@ -39,6 +39,10 @@ Proved here:
   state). `Signal = Slot + puller Effect`; universal form of the wire-level
   "changed eager Signal emits `SlotValue`, never bare `Invalidate` for its
   backing slot" invariant.
+- `disposeGroup_eq_disposeAll` and friends — explicit disposal detaches edges in
+  *both* directions, and ending a teardown group (`child()`) is observationally
+  equal to disposing each member individually. See § "Disposal and teardown
+  groups" below.
 
 The guards are total functions of `(graph, node, value)`, so the
 "no churn on equal" guarantee is by construction — but the theorems make it
@@ -67,6 +71,7 @@ inductive NodeKind where
   | cell     -- a single-writer always-set input value
   | slot     -- a memoized derived value, recomputed lazily on read
   | effect   -- a side-effecting reactive computation that re-runs on invalidation
+  | disposed -- a torn-down node: its arena entry is cleared and its id is free
   deriving Repr
 
 /-- The runtime state of one reactive node. Cells carry a concrete value; slots
@@ -348,5 +353,233 @@ theorem signal_materialized_after_recompute
       simp only [hsup]
       rw [markDirtyAll_preserves_nonmember_node _ _ _ hnot_self]
       exact hcleared_dirty
+
+/-! ## Disposal and teardown groups
+
+Explicit teardown (`lazily-rs/src/context.rs`: `Context::dispose_slot`,
+`Context::dispose_cell`, `Context::child` / `ChildContext`), specified in
+`lazily-spec/docs/reactive-graph.md` § "Lifecycle".
+
+Handles are copyable ids, not owners, so dropping every handle to a node
+reclaims nothing: without an explicit disposal call the node and its edge on
+each dependency survive for the life of the context — unbounded growth in both
+memory and propagation cost under subscribe/unsubscribe churn. The model
+therefore makes disposal a *graph* operation, not a refcount:
+
+- **Both directions.** `disposeNode` clears the node's own reverse-edge list
+  (nothing is subscribed to a dead node) *and* removes it from every other
+  node's list (a dead node is subscribed to nothing). Modeling only one
+  direction would leave exactly the leak the runtime's
+  `remove_dependent_edges_locked` / `remove_dependency_edges_locked` pair
+  exists to close.
+- **Reading a disposed node is an error.** Modeled by the `.disposed` kind with
+  no value: there is no value to observe, so any law phrased over
+  `.value = some _` is simply unavailable at a disposed id. The model does not
+  encode the *throw*; it fixes the observable state that makes reading
+  meaningless.
+- **A teardown group is a set and a moment, nothing more.** `Group` records the
+  ids created through it (`ChildContext.owned`), and `disposeGroup` tears the
+  whole set down in one pass. The load-bearing theorem is
+  [`disposeGroup_eq_disposeAll`]: that one pass is *observationally equal* to
+  disposing each member individually, so a group can introduce no disposal
+  semantics of its own. Grouping bounds teardown, **not visibility** — the
+  model needs no scoping construct to say so, because reads in this model are
+  plain `Graph.node` lookups unrestricted by group, exactly matching "a child's
+  nodes read parent-owned or sibling-owned nodes freely".
+- **The group hazard is the single-disposal hazard.** Since group teardown *is*
+  the fold of single disposals, it inherits the caveat verbatim: ending a group
+  tears down its nodes even if something outside still reads them.
+
+Proved here:
+
+- `disposeNode_detaches_both_directions` — after disposal the id appears in no
+  node's dependents list anywhere, and its own list is empty.
+- `disposeNode_idempotent` — disposing twice equals disposing once.
+- `disposeGroup_eq_disposeAll` — group teardown equals the fold of individual
+  disposals (cited by name from `lazily-spec/docs/reactive-graph.md`).
+- `disposeAll_preserves_nonmember_node` / `disposeAll_preserves_nonmembers` —
+  a node outside the group keeps its state and its dirty flag.
+- `disposeAll_order_independent` — teardown does not depend on the order the
+  group recorded its members.
+- `disposeNode_recycled_id_inherits_nothing` — a re-minted node at a disposed
+  id starts with an empty reverse-edge set. `dispose_slot` pushes the id onto
+  `free_ids`, so a later `computed`/`cell` can land on it; without the edge
+  detach above, the fresh node would alias a stale index and inherit
+  invalidations meant for its dead predecessor. -/
+
+/-- The cleared arena entry left behind by disposal: no kind of live node, no
+    value, no memo guard, not scheduled. -/
+def disposedState : NodeState := ⟨.disposed, none, none, false⟩
+
+/-- Tear down node `id`: clear its arena entry and detach its edges in **both**
+    directions — its own dependents list is emptied, and it is removed from
+    every other node's dependents list. Mirrors `Context::dispose_slot`'s
+    `remove_dependent_edges_locked` + `remove_dependency_edges_locked` pair
+    (`dispose_cell` is the same operation on a node with no dependencies).
+
+    Removal is by `filter`, not `erase`: a duplicated subscription must not
+    survive its subscriber. -/
+def disposeNode (g : Graph) (id : NodeId) : Graph where
+  node := fun n => if n = id then disposedState else g.node n
+  dependents := fun n =>
+    if n = id then [] else (g.dependents n).filter (fun d => d != id)
+
+/-- Dispose every node in `ids`, folding left to right — the individual-disposal
+    baseline that [`disposeGroup_eq_disposeAll`] measures group teardown
+    against. Mirrors [`markDirtyAll`]. -/
+def disposeAll (g : Graph) (ids : List NodeId) : Graph :=
+  ids.foldl (fun acc d => disposeNode acc d) g
+
+/-- A teardown group (`ChildContext`): the ids created through it. It records
+    *only* ids — the node kinds are read back from the graph at teardown — which
+    is why the group needs no disposal logic of its own. -/
+structure Group where
+  members : List NodeId
+
+/-- End a teardown group: clear every member and detach every edge touching a
+    member, in one pass. Deliberately *not* defined as a fold, so that
+    [`disposeGroup_eq_disposeAll`] has content: it is the independent
+    "whole set, one moment" reading of group teardown. -/
+def disposeGroup (g : Graph) (grp : Group) : Graph where
+  node := fun n => if n ∈ grp.members then disposedState else g.node n
+  dependents := fun n =>
+    if n ∈ grp.members then []
+    else (g.dependents n).filter (fun d => decide (d ∉ grp.members))
+
+/-- Componentwise equality of graphs. -/
+theorem Graph.ext' {g h : Graph}
+    (hn : g.node = h.node) (hd : g.dependents = h.dependents) : g = h := by
+  cases g; cases h; simp_all
+
+/-- Disposal clears the node's arena entry: the id names no live node, so there
+    is no value to read. -/
+theorem disposeNode_clears_node (g : Graph) (id : NodeId) :
+    (disposeNode g id).node id = disposedState := by simp [disposeNode]
+
+/-- Disposal detaches edges in **both** directions: the disposed id occurs in no
+    node's dependents list anywhere in the graph, and its own dependents list is
+    empty. The pair is what keeps teardown from leaking — one direction alone
+    would leave either a dangling subscriber or a dangling subscription. -/
+theorem disposeNode_detaches_both_directions (g : Graph) (id : NodeId) :
+    (∀ n, id ∉ (disposeNode g id).dependents n) ∧
+    (disposeNode g id).dependents id = [] := by
+  refine ⟨fun n => ?_, by simp [disposeNode]⟩
+  by_cases h : n = id
+  · simp [disposeNode, h]
+  · simp [disposeNode, h, List.mem_filter]
+
+/-- Disposal is idempotent: a second teardown of the same id is a no-op, so a
+    double `dispose` (or a group whose member list repeats an id) is harmless. -/
+theorem disposeNode_idempotent (g : Graph) (id : NodeId) :
+    disposeNode (disposeNode g id) id = disposeNode g id := by
+  refine Graph.ext' (funext fun n => ?_) (funext fun n => ?_)
+  · by_cases h : n = id <;> simp [disposeNode, h]
+  · by_cases h : n = id
+    · simp [disposeNode, h]
+    · simp [disposeNode, h, List.filter_filter]
+
+/-- A member list that is empty leaves the graph untouched. -/
+private theorem disposeGroup_nil (g : Graph) : disposeGroup g ⟨[]⟩ = g := by
+  refine Graph.ext' (funext fun n => ?_) (funext fun n => ?_) <;>
+    simp [disposeGroup]
+
+/-- Peeling one member off a group teardown is the same as disposing that member
+    first and tearing down the rest — the step that turns the one-pass group
+    definition into the individual-disposal fold. -/
+private theorem disposeGroup_cons (g : Graph) (x : NodeId) (xs : List NodeId) :
+    disposeGroup g ⟨x :: xs⟩ = disposeGroup (disposeNode g x) ⟨xs⟩ := by
+  refine Graph.ext' (funext fun n => ?_) (funext fun n => ?_)
+  · by_cases hxs : n ∈ xs
+    · simp [disposeGroup, disposeNode, hxs]
+    · by_cases hx : n = x <;> simp [disposeGroup, disposeNode, hxs, hx]
+  · by_cases hxs : n ∈ xs
+    · simp [disposeGroup, disposeNode, hxs]
+    · by_cases hx : n = x
+      · simp [disposeGroup, disposeNode, hx]
+      · have hcons : n ∉ x :: xs := by simp [hx, hxs]
+        simp only [disposeGroup, disposeNode, if_neg hcons, if_neg hxs, if_neg hx,
+          List.filter_filter]
+        refine List.filter_congr fun d _ => ?_
+        by_cases hdx : d = x <;> simp [hdx]
+
+/-- **Group teardown equals the fold of individual disposals.**
+
+    Ending a teardown group is observationally equal to disposing each of its
+    members one at a time: the graphs are identical, node for node and edge for
+    edge. A group therefore introduces *no disposal semantics of its own* — it
+    names a set and a moment, and nothing else. Two consequences the spec leans
+    on: a group cannot be safer than single disposal (it inherits the "tears
+    down nodes something outside may still read" hazard verbatim), and a binding
+    may implement `child()` as a recorded id list plus a teardown loop without
+    changing observable behavior.
+
+    Cited by name from `lazily-spec/docs/reactive-graph.md` § "Lifecycle". -/
+theorem disposeGroup_eq_disposeAll (g : Graph) (grp : Group) :
+    disposeGroup g grp = disposeAll g grp.members := by
+  obtain ⟨ms⟩ := grp
+  induction ms generalizing g with
+  | nil => simpa [disposeAll] using disposeGroup_nil g
+  | cons x xs ih =>
+    show disposeGroup g ⟨x :: xs⟩ = disposeAll g (x :: xs)
+    rw [disposeGroup_cons g x xs, ih (disposeNode g x)]
+    rfl
+
+/-- Disposing a group leaves a node outside it completely untouched: same kind,
+    same value, same memo guard, same dirty flag. Mirrors
+    [`markDirtyAll_preserves_nonmember_node`].
+
+    Note this is the *node state*. A survivor's reverse-edge list is still
+    pruned of disposed members — that pruning is the point of
+    [`disposeNode_detaches_both_directions`], not a violation of this law. -/
+theorem disposeAll_preserves_nonmember_node
+    (g : Graph) (ids : List NodeId) (d : NodeId) (hnmem : d ∉ ids) :
+    (disposeAll g ids).node d = g.node d := by
+  rw [← disposeGroup_eq_disposeAll g ⟨ids⟩]
+  simp [disposeGroup, hnmem]
+
+/-- A node outside a disposed group keeps its dirty flag: teardown of a group
+    schedules no work anywhere else. -/
+theorem disposeAll_preserves_nonmembers
+    (g : Graph) (ids : List NodeId) (d : NodeId) (hnmem : d ∉ ids) :
+    ((disposeAll g ids).node d).dirty = (g.node d).dirty :=
+  congrArg NodeState.dirty (disposeAll_preserves_nonmember_node g ids d hnmem)
+
+/-- Group teardown depends only on the *set* of members, not on the order or
+    multiplicity in which the group recorded them. Falls out of
+    [`disposeGroup_eq_disposeAll`]: the one-pass definition consults membership
+    alone, so any two member lists with the same members tear down identically.
+
+    This is what makes `ChildContext.owned` free to be a plain `Vec` appended in
+    creation order: reversing it, deduplicating it, or draining it in any order
+    yields the same graph. -/
+theorem disposeAll_order_independent
+    (g : Graph) (ids ids' : List NodeId) (hmem : ∀ n, n ∈ ids ↔ n ∈ ids') :
+    disposeAll g ids = disposeAll g ids' := by
+  rw [← disposeGroup_eq_disposeAll g ⟨ids⟩, ← disposeGroup_eq_disposeAll g ⟨ids'⟩]
+  refine Graph.ext' (funext fun n => ?_) (funext fun n => ?_)
+  · simp [disposeGroup, hmem n]
+  · simp only [disposeGroup, hmem n]
+    by_cases h : n ∈ ids'
+    · simp [h]
+    · simp only [if_neg h]
+      exact List.filter_congr fun d _ => by simp [hmem d]
+
+/-- A recycled id inherits nothing: a node minted at a disposed id starts with
+    an empty reverse-edge set.
+
+    `dispose_slot` pushes the id onto `free_ids`, so a later `computed`/`cell`
+    can land on exactly this slot. This is the model-level statement of a real
+    hazard — a binding that recycles ids without detaching the dead node's edges
+    leaves a stale index aliased onto an unrelated node, which then receives
+    invalidations meant for its predecessor and, worse, keeps a dead
+    subscription list alive. Detaching at disposal time is what makes recycling
+    sound. -/
+theorem disposeNode_recycled_id_inherits_nothing
+    (g : Graph) (id : NodeId) (fresh : NodeState) :
+    (setNode (disposeNode g id) id fresh).node id = fresh ∧
+    (setNode (disposeNode g id) id fresh).dependents id = [] ∧
+    (∀ n, id ∉ (setNode (disposeNode g id) id fresh).dependents n) := by
+  refine ⟨setNode_eq _, by simp [setNode, disposeNode], fun n => ?_⟩
+  simpa only [setNode] using (disposeNode_detaches_both_directions g id).1 n
 
 end LazilyFormal.Reactive
