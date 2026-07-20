@@ -107,6 +107,12 @@ signaling:
   eager-`Signal` materialization, explicit disposal and teardown scopes). The pure reactive core every binding's
   `Context` implements, and the layer whose changes surface on the IPC wire as
   `CellSet` / `SlotValue` / `Invalidate`.
+- **`LazilyFormal/Signal.lean`** — the derived eager construct
+  (`Signal ≡ Slot.eager`): a memo slot plus a puller effect, modeled at the
+  resolution where `compute` is a real function of the sources and its
+  invocations are *counted*. Proves the demotion theorem (a signal and a bare
+  lazy memo agree on every read, under every program), freshness at mutator
+  return, and that a batch of N writes runs the puller once rather than N times.
 - **`LazilyFormal/ThreadSafe.lean`** — the thread-safe reactive context
   (`lazily-spec` § "Concurrency layers are required"): a batch flush that
   serializes concurrent cell writes into one coalesced invalidation pass. The
@@ -317,6 +323,38 @@ hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent
   (disposed) id starts with an empty reverse-edge set: the model-level form of
   the stale-index aliasing hazard that edge detach at disposal time closes.
 
+**Signal (`Signal`) — the derived eager construct (`Signal ≡ Slot.eager`)**
+
+`Reactive` fixes the *graph* half of the signal claim; this module re-models it
+at the resolution where **compute is an event**, so that "how many times did the
+memo run" is a statement the model can make (`World.computes` is the
+instrument — the one field with no runtime counterpart).
+- `signal_read_equiv_lazy_memo` — **the demotion theorem.** For every program
+  (any interleaving of writes, reads, batches, and puller disposal), a signal
+  and a bare lazy memo over the same recipe emit the *same sequence of read
+  values*; both equal `specRun`, the pure re-evaluate-on-every-read reference.
+  Adding the puller changes **when** compute runs and never **what** a reader
+  observes — which is what makes "Signal is not a core primitive" a proof.
+- `signal_fresh_after_set_cell` / `signal_fresh_after_batch_exit` — what *eager*
+  means: with the puller live, the backing value equals `compute` of the current
+  sources the instant `set_cell` / `batch` returns, with no intervening read.
+  Stated as preservation (same predicate in hypothesis and conclusion), so it
+  iterates over any number of writes.
+- `lazy_memo_not_fresh_after_set_cell` — and the bare memo does not have it. This
+  is the *only* observable difference between the two constructs, and by
+  `signal_read_equiv_lazy_memo` no read can detect it.
+- `batch_pull_runs_at_most_once` / `batch_pull_runs_exactly_once` — **N writes
+  inside a batch cost one compute, not N**; contrast
+  `unbatched_writes_compute_once_per_write`, where the same three writes outside
+  a batch cost three. The property most at risk in a binding, because violating
+  it still serves *correct values* — only the count is wrong, so no value-level
+  fixture can see it.
+- `disposed_signal_value_stays_readable` / `disposed_signal_reads_correctly` /
+  `disposed_signal_does_not_materialize_on_write` /
+  `disposed_signal_computes_on_next_read` — disposing the *puller* is not
+  disposing the signal: the slot stays readable and correct, a write no longer
+  materializes anything, and the next read pays the compute instead.
+
 **SlotMap materialization (`Materialization`) — eager default / lazy opt-in (`#lzmatmode`)**
 
 The materialization axis of a `SlotMap` — the keyed map whose
@@ -485,7 +523,8 @@ of the element set. Every compute layer that has a pure-machine core is modeled:
 
 | lazily-spec compute layer (`MUST`) | lazily-formal module | Status |
 |-------------------------------------|----------------------|--------|
-| Reactive core (Cell / Slot / Effect; + derived Signal = Slot.eager) | `Reactive.lean` | modeled |
+| Reactive core (Cell / Slot / Effect) | `Reactive.lean` | modeled |
+| Derived `Signal ≡ Slot.eager` (read-equivalence, freshness, one pull per flush) | `Signal.lean` | modeled |
 | SlotMap materialization (eager default / lazy opt-in, `#lzmatmode`) | `Materialization.lean` | modeled (contract; unified cell/slot map); Rust + C++ impls shipped (`SlotMap`) |
 | Keyed cell collections (`CellMap`/`CellTree`, reconciliation) | `Collection.lean`, `Tree.lean`, `Reconciliation.lean` | modeled |
 | Memoized semantic tree (`SemTree`) | `SemTree.lean` | modeled |

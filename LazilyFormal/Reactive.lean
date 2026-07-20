@@ -303,7 +303,17 @@ effect that re-materializes the slot immediately after every invalidation. The
 universal observable property is that a reader of a signal never observes an
 unset intermediate state: after the puller runs, the backing slot's value is
 concrete. This is the formal form of the wire-level "changed eager Signal emits
-`SlotValue`, never a bare `Invalidate` for its backing slot" invariant. -/
+`SlotValue`, never a bare `Invalidate` for its backing slot" invariant.
+
+This is the *graph* half of the signal claim, and it is all this kernel can
+state: `recomputeSlot` receives the new value from its caller, so the model has
+no notion of *running* a computation and therefore cannot say that the puller
+changes only the timing of compute, nor how many times compute ran.
+`LazilyFormal.Signal` re-models the signal at that resolution — compute as a
+function of the sources, with its invocations counted — and proves the two
+properties this section cannot reach: `signal_read_equiv_lazy_memo` (a signal
+and a bare lazy memo agree on every read under every program) and
+`batch_pull_runs_exactly_once` (N batched writes cost one pull, not N). -/
 
 /-- Run the signal's puller: recompute the backing slot to `newVal`. By
     construction the puller runs *immediately* after invalidation (it is itself

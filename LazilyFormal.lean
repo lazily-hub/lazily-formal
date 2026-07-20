@@ -3,6 +3,7 @@ import LazilyFormal.StateMachine
 import LazilyFormal.StateChart
 import LazilyFormal.AdStateChart
 import LazilyFormal.Reactive
+import LazilyFormal.Signal
 import LazilyFormal.RevisionEngine
 import LazilyFormal.Merge
 import LazilyFormal.Relay
