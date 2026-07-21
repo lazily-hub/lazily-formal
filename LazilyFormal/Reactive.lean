@@ -3,19 +3,21 @@
 
 The flat reactive core shared by every lazily binding (`lazily-rs`,
 `lazily-py`, `lazily-zig`, `lazily-kt`, `lazily-js`, `lazily-dart`). It models
-the **Cell kernel** — the genus `Cell<T, K>` over the two value-bearing kinds
-`source` (`SourceCell`) and `formula` (`FormulaCell`), plus the value-less
-`effect` sink — documented in `lazily-spec/docs/reactive-graph.md` and
+the **Cell kernel** — `Cell` is the value-bearing node concept, and its two
+kinds are the `source` cell (handle `Source<T, M>`) and the `computed` cell
+(handle `Computed<T>`), plus the value-less `effect` sink. (v2 naming: there is
+no `Cell<T, K>` genus handle — `Cell` names the concept, `Source`/`Computed` are
+the concrete handles.) Documented in `lazily-spec/docs/reactive-graph.md` and
 implemented in `lazily-rs/src/{context,slot,cell,signal,effect}.rs`. An eager
-value is a *driven* `formula` (`formula().drive()`), not a fourth kind.
+value is a *driven* `computed` (`computed().eager()`), not a fourth kind.
 
 This is the formal counterpart of the *behavioral core* of the reactive graph:
 
-- the closed node-kind partition (source / formula / effect — no `Signal` kind),
+- the closed node-kind partition (source / computed / effect — no `Signal` kind),
 - the reverse subscription edge set (`source → its direct dependents`),
 - the `PartialEq` source-write guard,
-- the formula-equality suppression guard (formulas are guarded by default), and
-- the eager (driven-formula) materialization invariant.
+- the computed-equality suppression guard (computed cells are guarded by default), and
+- the eager (driven-computed) materialization invariant.
 
 Like the `StateMachine` kernel, this is the layer whose state changes surface
 on the lazily-spec IPC wire as `CellSet` / `SlotValue` / `Invalidate` ops (the
@@ -32,14 +34,14 @@ Proved here:
   `CellSet` and no downstream ops" invariant.
 - `setCell_different_invalidates_dependents` — a strictly-different write marks
   every direct dependent dirty.
-- `recomputeSlot_equal_preserves_dependents` — the formula guard: a `formula`
+- `recomputeSlot_equal_preserves_dependents` — the computed guard: a `computed`
   that recomputes with its guard returning `true` leaves every *downstream*
   dependent untouched. (The `Slot` in the identifier is the storage sense.)
 - `recomputeSlot_different_invalidates_dependents` — a strictly-different
   recompute marks every direct dependent dirty.
-- `signal_materialized_after_recompute` — a driven `formula`'s backing node is
+- `signal_materialized_after_recompute` — a driven `computed`'s backing node is
   always materialized after the puller runs (no observable "unset" intermediate
-  state). A driven formula = `formula` + puller `effect` (`formula().drive()`);
+  state). A driven computed = `computed` + puller `effect` (`computed().eager()`);
   universal form of the wire-level "changed eager value emits `SlotValue`, never
   bare `Invalidate` for its backing node" invariant.
 - `disposeScope_eq_disposeAll` and friends — explicit disposal detaches edges in
@@ -72,30 +74,30 @@ abbrev NodeId := Nat
 abbrev Value := Nat
 
 /-- Kind of a reactive node — the **Cell kernel** partition. A node's value comes
-    either from outside it (`source`) or from upstream of it (`formula`); an
+    either from outside it (`source`) or from upstream of it (`computed`); an
     `effect` is a value-less **sink**. An eager value is not a separate kind: a
-    *driven* `formula` is a `formula` paired with a puller `effect` (see
-    [`signal_materialized_after_recompute`]), exactly the `formula().drive()`
+    *driven* `computed` is a `computed` paired with a puller `effect` (see
+    [`signal_materialized_after_recompute`]), exactly the `computed().eager()`
     construction in `lazily-rs/src/signal.rs`. -/
 inductive NodeKind where
   | source   -- a `SourceCell`: written from outside; always set (was `cell`)
-  | formula  -- a `FormulaCell`: memoized derived value, recomputed lazily on read (was `slot`)
+  | computed  -- a `ComputedCell`: memoized derived value, recomputed lazily on read (was `slot`)
   | effect   -- a value-less sink: a side-effecting computation that re-runs on invalidation
   | disposed -- a torn-down node: its arena slot is cleared and its id is free
   deriving Repr, DecidableEq
 
 /-- The runtime state of one reactive node. A `source` carries a concrete value; a
-    `formula` carries an optional cached value and an optional equality guard; an
+    `computed` carries an optional cached value and an optional equality guard; an
     `effect` carries a pending flag (modeled by `dirty`) and never a value. -/
 structure NodeState where
   kind : NodeKind
-  /-- A `source`'s value, or a `formula`'s last cached value. `none` for a dirty
-      formula or an `effect` (effects have no value of their own — the sink
+  /-- A `source`'s value, or a `computed`'s last cached value. `none` for a dirty
+      computed or an `effect` (effects have no value of their own — the sink
       position). -/
   value : Option Value
-  /-- Equality guard for a `formula` (guarded by default): `some eq` suppresses
+  /-- Equality guard for a `computed` (guarded by default): `some eq` suppresses
       downstream invalidation when a recompute yields an equal value (`lazily-rs`'s
-      `ctx.formula`). `none` ⇒ every recompute churns downstream. -/
+      `ctx.computed`). `none` ⇒ every recompute churns downstream. -/
   memoEq : Option (Value → Value → Bool)
   /-- `true` when the node must be recomputed/rerun before its next observed
       read. Set by invalidation; cleared by recompute. -/
@@ -119,23 +121,24 @@ def Graph.WellFormed (g : Graph) : Prop :=
 
 /-! ## The Cell kernel partition (`#lzcellkernel`)
 
-The node enumeration is closed: every reactive node is a `source`, a `formula`,
+The node enumeration is closed: every reactive node is a `source`, a `computed`,
 an `effect`, or `disposed`. There is no `Signal` kind — an eager value is a driven
-`formula` (a `formula` paired with a puller `effect`), not a fourth constructor.
-The value-bearing kinds `source`/`formula` are the two faces of the genus
-`Cell<T, K>` (value from outside vs. from upstream); `effect` is the value-less
-sink. This section is `lazily-cell-kernel-design.md` §1, §9.2.2, and §3 rendered
+`computed` (a `computed` paired with a puller `effect`), not a fourth constructor.
+The value-bearing kinds `source`/`computed` are the two kinds of `Cell` (value
+from outside vs. from upstream), surfaced as the `Source`/`Computed` handles;
+`effect` is the value-less sink. (v2: `Cell` is the concept, not a `Cell<T, K>`
+genus handle.) This section is `lazily-cell-kernel-design.md` §1, §9.2.2, and §3 rendered
 as proofs — the design asks the formal model to *confirm these are expressible*. -/
 
 /-- Every node kind is one of exactly four constructors — the closed kernel. In
     particular there is no separate eager/`Signal` kind to dispatch on. -/
 theorem node_kind_partition (k : NodeKind) :
-    k = .source ∨ k = .formula ∨ k = .effect ∨ k = .disposed := by
+    k = .source ∨ k = .computed ∨ k = .effect ∨ k = .disposed := by
   cases k <;> simp
 
-/-- The genus `Cell<T, K>`: a node that bears a readable value is a `source` or a
-    `formula`. -/
-def IsCell (k : NodeKind) : Prop := k = .source ∨ k = .formula
+/-- `Cell` (the value-bearing node concept): a node that bears a readable value is
+    a `source` or a `computed`. -/
+def IsCell (k : NodeKind) : Prop := k = .source ∨ k = .computed
 
 /-- **Writer is a sink (§9.2.2).** The value-less `effect` is not a `Cell`: it
     occupies the sink position, nothing can read it, and a writer — which produces
@@ -149,12 +152,12 @@ theorem live_node_is_cell_or_sink (k : NodeKind) (h : k ≠ .disposed) :
   cases k <;> simp_all [IsCell]
 
 /-- **Kind-restricted write protection (§3).** The write capability is exactly the
-    `source` instantiation — `set`/`merge` live on `Cell<T, Source<M>>` alone.
+    `source` kind — `set`/`merge` live on the `Source<T, M>` handle alone.
     This is the property the design asks the formal model to confirm is
     expressible; it is, as a decidable predicate on the kind. -/
 def Writable (k : NodeKind) : Prop := k = .source
 
-theorem formula_not_writable : ¬ Writable .formula := by simp [Writable]
+theorem computed_not_writable : ¬ Writable .computed := by simp [Writable]
 theorem effect_not_writable  : ¬ Writable .effect  := by simp [Writable]
 
 /-- Replace a single node's state. -/
@@ -294,17 +297,17 @@ theorem setCell_different_invalidates_dependents
   simp only [setCell, hcur, hne, if_false]
   exact markDirtyAll_marks_members _ _ _ hdep
 
-/-! ## Formula recompute — the equality guard
+/-! ## Computed recompute — the equality guard
 
-The `FormulaCell` recompute primitive (`lazily-rs`: `ctx.formula` /
+The `ComputedCell` recompute primitive (`lazily-rs`: `ctx.computed` /
 `Context::get`). The guard is the universal "no churn on equal recompute"
-guarantee that surfaces on the wire as "an equal formula recompute emits no
+guarantee that surfaces on the wire as "an equal computed recompute emits no
 `SlotValue` and no downstream `Invalidate`". (`recomputeSlot` keeps its name — the
-`Slot` is the storage position the formula node occupies.) -/
+`Slot` is the storage position the computed node occupies.) -/
 
 /-- `recomputeSlot g id newVal`: clear `id`'s dirty flag and cache `newVal`.
     If `id` carries an equality guard and `newVal` equals its prior cached
-    value, downstream dependents are **not** marked dirty (formula suppression).
+    value, downstream dependents are **not** marked dirty (computed suppression).
     Otherwise every direct dependent is marked dirty. -/
 def recomputeSlot (g : Graph) (id : NodeId) (newVal : Value) : Graph :=
   let prior := (g.node id).value
@@ -312,14 +315,14 @@ def recomputeSlot (g : Graph) (id : NodeId) (newVal : Value) : Graph :=
     match prior, (g.node id).memoEq with
     | some old, some eq => eq old newVal
     | _, _ => false
-  let cleared := setNode g id ⟨.formula, some newVal, (g.node id).memoEq, false⟩
+  let cleared := setNode g id ⟨.computed, some newVal, (g.node id).memoEq, false⟩
   match suppressed with
   | true => cleared
   | false => markDirtyAll cleared (g.dependents id)
 
-/-- Equality suppression: a `formula` that recomputes with its guard
+/-- Equality suppression: a `computed` that recomputes with its guard
     returning `true` leaves every *downstream* dependent (`d ≠ id`) untouched.
-    The universal form of the wire-level "equal formula recompute emits no
+    The universal form of the wire-level "equal computed recompute emits no
     `Invalidate`" invariant. -/
 theorem recomputeSlot_equal_preserves_dependents
     (g : Graph) (id : NodeId) (newVal : Value)
@@ -330,9 +333,9 @@ theorem recomputeSlot_equal_preserves_dependents
     ((recomputeSlot g id newVal).node d).dirty = (g.node d).dirty := by
   simp only [recomputeSlot, hsup]
   exact (congrArg NodeState.dirty
-          (setNode_ne (s := ⟨.formula, some newVal, (g.node id).memoEq, false⟩) hdne.symm))
+          (setNode_ne (s := ⟨.computed, some newVal, (g.node id).memoEq, false⟩) hdne.symm))
 
-/-- A strictly-different recompute (the formula guard, if present, returns `false`)
+/-- A strictly-different recompute (the computed guard, if present, returns `false`)
     marks every direct dependent dirty. -/
 theorem recomputeSlot_different_invalidates_dependents
     (g : Graph) (id : NodeId) (newVal : Value)
@@ -344,10 +347,10 @@ theorem recomputeSlot_different_invalidates_dependents
   simp only [recomputeSlot, hsup]
   exact markDirtyAll_marks_members _ _ _ hdep
 
-/-! ## Driven formula — eager materialization
+/-! ## Driven computed — eager materialization
 
-A *driven* `formula` (`formula().drive()`, `lazily-rs/src/signal.rs`) is a
-`formula` paired with a puller `effect` that re-materializes it immediately after
+A *driven* `computed` (`computed().eager()`, `lazily-rs/src/signal.rs`) is a
+`computed` paired with a puller `effect` that re-materializes it immediately after
 every invalidation. The universal observable property is that a reader never
 observes an unset intermediate state: after the puller runs, the value is
 concrete. This is the formal form of the wire-level "changed eager value emits
@@ -357,39 +360,39 @@ This is the *graph* half of the claim, and it is all this kernel can state:
 `recomputeSlot` receives the new value from its caller, so the model has no notion
 of *running* a computation and therefore cannot say that the puller changes only
 the timing of compute, nor how many times compute ran. `LazilyFormal.Signal`
-re-models the driven formula at that resolution — compute as a function of the
+re-models the driven computed at that resolution — compute as a function of the
 sources, with its invocations counted — and proves the two properties this
-section cannot reach: `signal_read_equiv_lazy_memo` (a driven formula and a bare
-lazy formula agree on every read under every program) and
+section cannot reach: `signal_read_equiv_lazy_memo` (a driven computed and a bare
+lazy computed agree on every read under every program) and
 `batch_pull_runs_at_most_once` (N batched writes cost one pull, not N). -/
 
-/-- Run the puller: recompute the backing formula to `newVal`. By construction the
+/-- Run the puller: recompute the backing computed to `newVal`. By construction the
     puller runs *immediately* after invalidation (it is itself a dependent
-    `effect`), so after [`signalPull`] the backing formula is materialized
+    `effect`), so after [`signalPull`] the backing computed is materialized
     regardless of whether the value changed. -/
 def signalPull (g : Graph) (slotId : NodeId) (newVal : Value) : Graph :=
   recomputeSlot g slotId newVal
 
-/-- After the puller runs, the backing formula carries a concrete cached
+/-- After the puller runs, the backing computed carries a concrete cached
     value (no `none` / unset intermediate) and is not dirty. This is the
     universal form of the wire invariant "a changed eager value emits
     `SlotValue`, not bare `Invalidate`, for its backing node" — observable at
     every input, not just the fixture-tested ones. Holds under `WellFormed`
-    (the formula node is not its own dependent). -/
+    (the computed node is not its own dependent). -/
 theorem signal_materialized_after_recompute
     (g : Graph) (slotId : NodeId) (newVal : Value) (hwf : g.WellFormed) :
     ((signalPull g slotId newVal).node slotId).value = some newVal ∧
     ((signalPull g slotId newVal).node slotId).dirty = false := by
   have hnot_self : slotId ∉ g.dependents slotId := hwf slotId
-  -- The `cleared` node state at `slotId` is `⟨.formula, some newVal, _, false⟩`;
+  -- The `cleared` node state at `slotId` is `⟨.computed, some newVal, _, false⟩`;
   -- on both branches (suppressed or not) the dependents fold cannot re-touch
   -- `slotId` itself (no self-edge), so `cleared`'s fields survive.
   have hcleared_value :
-      ((setNode g slotId ⟨.formula, some newVal, (g.node slotId).memoEq, false⟩).node slotId).value
+      ((setNode g slotId ⟨.computed, some newVal, (g.node slotId).memoEq, false⟩).node slotId).value
         = some newVal :=
     congrArg NodeState.value (setNode_eq _)
   have hcleared_dirty :
-      ((setNode g slotId ⟨.formula, some newVal, (g.node slotId).memoEq, false⟩).node slotId).dirty
+      ((setNode g slotId ⟨.computed, some newVal, (g.node slotId).memoEq, false⟩).node slotId).dirty
         = false :=
     congrArg NodeState.dirty (setNode_eq _)
   refine ⟨?_, ?_⟩
@@ -653,7 +656,7 @@ Two strategies for making a write observable at transitive depth are both
   transitive node dirty. Reads then trust the flag.
 - **Lazy pull** — a write marks little or nothing, and every read refreshes its
   own dependencies recursively before deciding whether to recompute. This is the
-  strategy `reactive-graph.md` describes: "On `get`, a formula first refreshes its
+  strategy `reactive-graph.md` describes: "On `get`, a computed first refreshes its
   own dependencies (recursively, lazy pull), then recomputes only if any
   dependency actually changed."
 
@@ -681,13 +684,13 @@ nodes. -/
 def cachedRead (g : Graph) (id : NodeId) : Option Value :=
   if (g.node id).dirty then none else (g.node id).value
 
-/-- A three-node chain `0 -> 1 -> 2`: a source cell, a formula reading it, and a
-    formula reading that formula. Values are seeded consistently with `src = v`. -/
+/-- A three-node chain `0 -> 1 -> 2`: a source cell, a computed reading it, and a
+    computed reading that computed. Values are seeded consistently with `src = v`. -/
 def chain (v : Value) : Graph :=
   { node := fun n =>
       if n = 0 then ⟨.source, some v, none, false⟩
-      else if n = 1 then ⟨.formula, some (v + 10), none, false⟩
-      else if n = 2 then ⟨.formula, some (v + 110), none, false⟩
+      else if n = 1 then ⟨.computed, some (v + 10), none, false⟩
+      else if n = 2 then ⟨.computed, some (v + 110), none, false⟩
       else ⟨.disposed, none, none, false⟩
   , dependents := fun n =>
       if n = 0 then [1] else if n = 1 then [2] else [] }
