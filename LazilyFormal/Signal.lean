@@ -1,54 +1,60 @@
 /-
-! Signal — the derived eager construct (`Signal ≡ Slot.eager`).
+! The eager construct — a **driven formula** (`formula().drive()`).
 
-`lazily-spec/docs/reactive-graph.md` demotes `Signal` from the core primitive
-set: it is **not** a kind of node. It is a memo `Slot` plus a puller `Effect`
-that reads the slot on creation and after every invalidation, so the value is
-materialized by the time the invalidating `set_cell` / `batch` returns.
+`lazily-spec/docs/reactive-graph.md` makes the eager value a *driven* `formula`,
+**not** a kind of node. It is a guarded `formula` plus a puller `Effect` that
+reads the formula on creation and after every invalidation, so the value is
+materialized by the time the invalidating `set` / `batch` returns. (`Signal` is
+retired as a type; this module keeps the name only as a stable Lean identifier —
+like `SlotId`, the storage sense — for the model of the driven formula.)
 
 `LazilyFormal.Reactive` already fixes the *graph* half of that claim — the
-backing slot carries a concrete value after the puller runs
+backing formula carries a concrete value after the puller runs
 (`signal_materialized_after_recompute`). What it cannot state is the part the
 spec actually leans on, because its `recomputeSlot` receives the new value from
 the caller and the graph has no notion of *running a computation*:
 
-- that adding the puller changes **when** compute runs and never **what** a
-  reader observes (the claim "Signal is not a primitive" reduces to), and
+- that attaching the puller (`.drive()`) changes **when** compute runs and never
+  **what** a reader observes (the claim "eager is not a primitive" reduces to), and
 - that the puller runs **once per flush, not once per write** — the property a
   binding can violate while still passing every value-level fixture, because
-  the values it serves are all correct and only the compute count is wrong.
+  the values it serves are all correct and only the compute count is wrong. This
+  is the `#lzsignaleager` clause-3 bug; under `formula().drive()` it becomes
+  structurally unwritable, since `.drive()` is idempotent and the coalescing
+  comes from the scheduled effect, not a per-write puller.
 
-So this module re-models the signal at the resolution where compute is an
+So this module re-models the driven formula at the resolution where compute is an
 event. The graph is collapsed to what these theorems need — a source
 environment, one derived node over it, and a counter — and `compute` is a real
 function of the sources, invoked by `recompute` and by nothing else. The
 counter is the whole point: `World.computes` is the only field here that has no
-counterpart in the runtime, and it exists so that "how many times did the memo
+counterpart in the runtime, and it exists so that "how many times did the formula
 run" is a statement the model can make.
 
 Proved here:
 
 - `signal_read_equiv_lazy_memo` — **the demotion theorem.** For every program
-  (any interleaving of writes, reads, batches, and disposal), a signal and a
-  bare lazy memo over the same compute emit the *same sequence of read values*.
-  Both equal `specRun`, the pure spec that just re-evaluates `compute` against
-  the current sources at each read. Adding the puller is observationally
-  invisible to a reader; it is a scheduling decision, not a semantic one.
+  (any interleaving of writes, reads, batches, and disposal), a driven formula and
+  a bare lazy formula over the same compute emit the *same sequence of read
+  values*. Both equal `specRun`, the pure spec that just re-evaluates `compute`
+  against the current sources at each read. Driving is observationally invisible
+  to a reader; it is a scheduling decision, not a semantic one.
 - `signal_fresh_after_set_cell` / `signal_fresh_after_batch_exit` — **what
   eager means.** With the puller live, the backing value equals
   `compute sources` the instant the mutator returns, with no intervening read.
-- `lazy_memo_not_fresh_after_set_cell` — and the bare memo does not: after the
-  same write it is dirty and has run compute zero times. This is the *only*
-  observable difference between the two, and it is not visible through a read
-  (which is exactly `signal_read_equiv_lazy_memo`).
+- `lazy_memo_not_fresh_after_set_cell` — and the bare (undriven) formula does not:
+  after the same write it is dirty and has run compute zero times. This is the
+  *only* observable difference between the two, and it is not visible through a
+  read (which is exactly `signal_read_equiv_lazy_memo`).
 - `batch_pull_runs_at_most_once` / `batch_pull_runs_exactly_once` — **N writes
-  inside a batch cost one compute, not N.** Contrast
+  inside a batch cost one compute, not N** — the clause-3 property, which survives
+  the reframing to `formula().drive()` unchanged. Contrast
   `unbatched_writes_compute_once_per_write`: the same three writes outside a
   batch cost three. A binding that recomputes per write inside a batch serves
   correct values and violates this.
-- `disposed_signal_*` — disposing the puller keeps the backing slot readable
-  and correct, and reverts it to lazy: a write no longer materializes anything,
-  and the next read is what pays for the compute.
+- `disposed_signal_*` — undriving the formula keeps it readable and correct, and
+  reverts it to lazy: a write no longer materializes anything, and the next read
+  is what pays for the compute.
 
 Values are abstract `Nat` stand-ins, as everywhere in `LazilyFormal`.
 -/
@@ -360,20 +366,21 @@ theorem run_reads_canonical (cfg : Config) :
       show (run cfg (disposePuller w) os).2 = specRun cfg w.src os
       exact ih _ (by simpa [disposePuller] using hc)
 
-/-- **The demotion theorem: `Signal ≡ Slot.eager` on reads.**
+/-- **The demotion theorem: a driven formula ≡ a lazy formula on reads.**
 
-    A signal (memo slot + puller effect) and a bare lazy memo over the same
-    recipe return *the same value for every read*, under every program — any
-    interleaving of writes, reads, batch entry and exit, and puller disposal.
+    A driven formula (guarded formula + puller effect) and a bare lazy formula
+    over the same recipe return *the same value for every read*, under every
+    program — any interleaving of writes, reads, batch entry and exit, and puller
+    disposal.
 
-    This is what makes "Signal is not a core primitive" a proof rather than a
-    slogan. Adding the puller changes **when** `compute` runs (and therefore how
-    many times: see `batch_pull_runs_exactly_once`) and never **what** a reader
-    observes. A binding is free to implement `signal(f)` as `slot(f)` plus an
-    effect, because there is no read-shaped experiment that can tell the two
-    apart.
+    This is what makes "eager is not a core primitive" a proof rather than a
+    slogan. Driving (`.drive()`) changes **when** `compute` runs (and therefore
+    how many times: see `batch_pull_runs_exactly_once`) and never **what** a reader
+    observes. `formula(f).drive()` *is* `formula(f)` plus a puller effect, and
+    there is no read-shaped experiment that can tell a driven formula from a lazy
+    one.
 
-    Cited by name from `lazily-spec/docs/reactive-graph.md` § "Signal eagerness". -/
+    Cited by name from `lazily-spec/docs/reactive-graph.md` § "Eager formulas". -/
 theorem signal_read_equiv_lazy_memo
     (cfg : Config) (s : SrcId → Value) (ops : List Op) :
     (run cfg (initSignal cfg s) ops).2 = (run cfg (initMemo s) ops).2 := by
@@ -612,15 +619,15 @@ theorem signal_fresh_after_batch_exit (cfg : Config) (w : World)
   · show ({ applyWrites cfg (beginBatch w) ws with depth := 0 } : World).dirty = false
     rw [hw]; exact hm.2
 
-/-! ## Disposing the puller reverts to lazy
+/-! ## Undriving reverts to lazy
 
-`reactive-graph.md`: "Disposing the puller effect reverts the signal to lazy
-behavior (the backing value stays readable but is no longer eagerly kept
+`reactive-graph.md`: "`undrive` (or disposing the formula) reverts it to lazy
+behaviour (the backing value stays readable but is no longer eagerly kept
 fresh)." Three separable claims, one theorem each. -/
 
-/-- The backing value stays readable: disposal touches the effect, not the slot.
-    Contrast `LazilyFormal.Reactive.disposeNode`, which clears the arena entry —
-    disposing a *puller* is not disposing the signal. -/
+/-- The backing value stays readable: undriving touches the effect, not the
+    formula. Contrast `LazilyFormal.Reactive.disposeNode`, which clears the arena
+    slot — removing a *puller* is not disposing the formula. -/
 theorem disposed_signal_value_stays_readable (w : World) :
     (disposePuller w).cache = w.cache ∧
     (disposePuller w).dirty = w.dirty ∧

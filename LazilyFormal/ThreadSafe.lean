@@ -68,7 +68,7 @@ at flush, over the coalesced union of changed sources' dependents. -/
 def applyWrite (g : Graph) (w : Write) : Graph × Bool :=
   match (g.node w.node).value with
   | some cur => if cur = w.value then (g, false)
-               else (setNode g w.node ⟨.cell, some w.value, none, false⟩, true)
+               else (setNode g w.node ⟨.source, some w.value, none, false⟩, true)
   | none => (g, false)
 
 /-- Fold a batch's value updates left to right, collecting the list of source
@@ -161,12 +161,12 @@ theorem flushBatch_singleton_eq_setCell (g : Graph) (n : NodeId) (v : Value) :
     case neg =>
       have haw :
           applyWrite g { node := n, value := v } =
-            (setNode g n ⟨.cell, some v, none, false⟩, true) := by
+            (setNode g n ⟨.source, some v, none, false⟩, true) := by
         simp only [applyWrite, hval]
         rw [if_neg heq]
       have hab :
           applyBatch g [{ node := n, value := v }] =
-            (setNode g n ⟨.cell, some v, none, false⟩, [n]) := by
+            (setNode g n ⟨.source, some v, none, false⟩, [n]) := by
         simp only [applyBatch, haw]
         rfl
       simp only [flushBatch]

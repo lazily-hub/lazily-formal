@@ -84,7 +84,7 @@ def revisionSetCell (rg : RevisionGraph) (id : NodeId) (v : Value) : RevisionGra
   | some cur =>
     if cur = v then rg
     else
-      { graph := setNode rg.graph id ⟨.cell, some v, none, false⟩,
+      { graph := setNode rg.graph id ⟨.source, some v, none, false⟩,
         revision := rg.revision + 1,
         verifiedAt := rg.verifiedAt,
         valueVersion := fun n => if n = id then rg.valueVersion id + 1 else rg.valueVersion n }
@@ -260,14 +260,14 @@ theorem get_equiv_push_different
   have hpush_val : ((setCell g id v).node id).value = some v := by
     have hcur_g : (g.node id).value = some cur := halign ▸ hcur
     have hdef : setCell g id v =
-        markDirtyAll (setNode g id ⟨.cell, some v, none, false⟩) (g.dependents id) := by
+        markDirtyAll (setNode g id ⟨.source, some v, none, false⟩) (g.dependents id) := by
       simp [setCell, hcur_g, hne]
     rw [hdef, markDirtyAll_preserves_value]
     exact congrArg NodeState.value (setNode_eq _)
   -- Revision engine: revisionSetCell stores `some v` at `id`.
   have hrev_val : ((revisionSetCell rg id v).graph.node id).value = some v := by
     have hdef : (revisionSetCell rg id v).graph =
-        setNode rg.graph id ⟨.cell, some v, none, false⟩ := by
+        setNode rg.graph id ⟨.source, some v, none, false⟩ := by
       simp [revisionSetCell, hcur, hne]
     rw [hdef]
     exact congrArg NodeState.value (setNode_eq _)

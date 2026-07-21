@@ -1,10 +1,11 @@
 /-
-! Async slot state machine — formal model.
+! Async formula state machine — formal model.
 
 The formal counterpart of `lazily-spec/docs/async.md` § "Async slot state
-machine". Models the pure transition core of an async reactive slot: the
-`Empty / Computing / Resolved / Error` lifecycle with revision-tracked stale
-completion discard.
+machine". Models the pure transition core of an async `FormulaCell` (a derived
+node held in an arena *slot* — hence the `SlotState` name, in the storage sense
+kept by the Cell kernel): the `Empty / Computing / Resolved / Error` lifecycle
+with revision-tracked stale completion discard.
 
 The headline invariant — "a stale completion is never published" — is the pure
 state-machine core of conformance point 2 (`async.md:218-219`). The
