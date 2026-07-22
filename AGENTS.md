@@ -41,8 +41,12 @@ this repo.
   holds by construction (pure Lean; `StepResult` carries no replacement `Chart`).
 - `LazilyFormal/Reactive.lean` — flat reactive graph kernel: the
   `Source / Computed / Effect` family with reverse subscription edges,
-  the `PartialEq` cell-write guard, the memo-equality suppression guard, and
-  eager-`Signal` materialization. Theorems:
+  unified ordinary/shared reads across both Cell kinds, the `PartialEq`
+  cell-write guard, the memo-equality suppression guard, and eager-`Signal`
+  materialization. Theorems:
+  `readShared_eq_readCell` / `trackedSharedRead_eq_trackedRead` (shared-owner
+  reads observe the same value and dependency edge as ordinary reads),
+  `trackedSharedRead_registers_edge` (source and computed reads both track),
   `setSource_equal_preserves_graph` (the universal "no churn on equal" guard),
   `setSource_different_invalidates_dependents`,
   `recomputeComputed_equal_preserves_dependents` (memo suppression),

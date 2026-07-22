@@ -102,9 +102,10 @@ signaling:
   (`enabled`, conflict resolution via disjoint exit sets), LCA exit/enter sets,
   descent, history record-on-exit / restore-on-enter, and `send`.
 - **`LazilyFormal/Reactive.lean`** — the flat reactive graph kernel: the
-  `Source / Computed / Effect` family (node kinds, reverse subscription
-  edges, the `PartialEq` cell-write guard, the memo-equality suppression guard,
-  eager-`Signal` materialization, explicit disposal and teardown scopes). The pure reactive core every binding's
+`Source / Computed / Effect` family (node kinds, reverse subscription
+edges, unified ordinary/shared reads across both Cell kinds, the `PartialEq`
+cell-write guard, the memo-equality suppression guard,
+eager-`Signal` materialization, explicit disposal and teardown scopes). The pure reactive core every binding's
   `Context` implements, and the layer whose changes surface on the IPC wire as
   `CellSet` / `SlotValue` / `Invalidate`.
 - **`LazilyFormal/Signal.lean`** — the derived eager construct
@@ -292,6 +293,11 @@ hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent
 (reject case needs no `Coherent`).
 
 **Reactive graph kernel (`Reactive`) — the `Source / Computed / Effect` family**
+- `readShared_eq_readCell` / `trackedSharedRead_eq_trackedRead` — a
+shared-owner read (Rust `Context::get_rc`) has the same two-kind domain,
+observed value, and dependency edge as an ordinary read; in particular,
+`trackedSharedRead_registers_edge` covers source reads as well as computed
+reads. Allocation/refcount behavior remains a language-level concern.
 - `setSource_equal_preserves_graph` — the `PartialEq` cell-write guard: an equal
   write leaves the whole graph byte-identical (universal form of the wire
   invariant "equal `set` emits no `CellSet` and no downstream ops").

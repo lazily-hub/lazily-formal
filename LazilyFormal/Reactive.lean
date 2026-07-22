@@ -14,6 +14,7 @@ value is a *driven* `computed` (`computed().eager()`), not a fourth kind.
 This is the formal counterpart of the *behavioral core* of the reactive graph:
 
 - the closed node-kind partition (source / computed / effect — no `Signal` kind),
+- the unified owned/shared read domain (`Source` and `Computed`, never `Effect`),
 - the reverse subscription edge set (`source → its direct dependents`),
 - the `PartialEq` source-write guard,
 - the computed-equality suppression guard (computed cells are guarded by default), and
@@ -28,6 +29,10 @@ exactly like the rest of `LazilyFormal`.
 
 Proved here:
 
+- `readShared_eq_readCell` / `trackedSharedRead_eq_trackedRead` — a shared-owner
+  read (Rust `Context::get_rc`) accepts the same two cell kinds, returns the same
+  value, and attributes the same dependency edge as the ordinary read. Runtime
+  ownership/refcount mechanics are intentionally outside this pure value model.
 - `setSource_equal_preserves_graph` — the `PartialEq` source-write guard: an equal
   write leaves the whole graph byte-identical (no churn, no downstream
   invalidation). Universal form of the wire-level "equal `set` emits no
@@ -159,6 +164,59 @@ def Writable (k : NodeKind) : Prop := k = .source
 
 theorem computed_not_writable : ¬ Writable .computed := by simp [Writable]
 theorem effect_not_writable  : ¬ Writable .effect  := by simp [Writable]
+
+/-! ## Unified shared-owner reads (`#lzrsgetarc`)
+
+An ordinary read and a shared-owner read are two result representations of the
+same Cell-kernel observation. In Rust the latter is `Context::get_rc`: it avoids
+requiring `T : Clone` and, when the value is heap-backed, returns another owner
+of the stored allocation. The formal model is intentionally ownership-agnostic,
+so it states the portable semantic content:
+
+* both `source` and `computed` are readable through either mode;
+* `effect` and `disposed` are not value-bearing and return no value;
+* the shared read observes exactly the value the ordinary read observes.
+
+Dirty-computed refresh is modeled by [`recomputeComputed`] before the observation,
+just as every other read theorem in this file reasons about the graph state at
+the observation boundary. Allocation identity, refcount bumps, and inline-value
+fallbacks are language/runtime facts rather than graph semantics. -/
+
+/-- Read the currently materialized value of either Cell kind. This total
+    function returns `none` for the value-less sink and disposed arena entries. -/
+def readCell (g : Graph) (id : NodeId) : Option Value :=
+  match (g.node id).kind with
+  | .source | .computed => (g.node id).value
+  | .effect | .disposed => none
+
+/-- Shared-owner read at the pure graph layer. The representation is abstracted
+    away, leaving the value observation that every binding must preserve. -/
+def readShared (g : Graph) (id : NodeId) : Option Value :=
+  readCell g id
+
+/-- A shared-owner read is observationally identical to an ordinary read for
+    every graph and node. -/
+theorem readShared_eq_readCell (g : Graph) (id : NodeId) :
+    readShared g id = readCell g id := by
+  rfl
+
+/-- The shared read covers the source kind, not only computed values. -/
+theorem readShared_source
+    (g : Graph) (id : NodeId) (hkind : (g.node id).kind = .source) :
+    readShared g id = (g.node id).value := by
+  simp [readShared, readCell, hkind]
+
+/-- The same shared read covers the computed kind. -/
+theorem readShared_computed
+    (g : Graph) (id : NodeId) (hkind : (g.node id).kind = .computed) :
+    readShared g id = (g.node id).value := by
+  simp [readShared, readCell, hkind]
+
+/-- Effects remain unreadable through the shared read surface. -/
+theorem readShared_effect
+    (g : Graph) (id : NodeId) (hkind : (g.node id).kind = .effect) :
+    readShared g id = none := by
+  simp [readShared, readCell, hkind]
 
 /-- Replace a single node's state. -/
 def setNode (g : Graph) (id : NodeId) (s : NodeState) : Graph :=
@@ -421,6 +479,40 @@ theorem registerReads_dependent_is_recomputing_node
   simp only [registerReads, List.mem_map] at he
   obtain ⟨_dep, _, rfl⟩ := he
   rfl
+
+/-- Edges registered by a typed read. The total formal function rejects the
+    non-cell kinds that the concrete handle API makes unrepresentable. -/
+def registeredReadEdges (g : Graph) (reader target : NodeId) : List Edge :=
+  match (g.node target).kind with
+  | .source | .computed => registerReads reader [target]
+  | .effect | .disposed => []
+
+/-- Ordinary tracked read: observed value plus the dependency edge attributed
+    to the node currently being recomputed. -/
+def trackedRead (g : Graph) (reader target : NodeId) : Option Value × List Edge :=
+  (readCell g target, registeredReadEdges g reader target)
+
+/-- Shared-owner tracked read. It differs only in result representation at the
+    runtime boundary, which this pure model erases. -/
+def trackedSharedRead (g : Graph) (reader target : NodeId) : Option Value × List Edge :=
+  (readShared g target, registeredReadEdges g reader target)
+
+/-- Shared and ordinary reads have identical value and dependency-tracking
+    behavior — in particular, a shared read of a `Source` cannot miss the edge. -/
+theorem trackedSharedRead_eq_trackedRead
+    (g : Graph) (reader target : NodeId) :
+    trackedSharedRead g reader target = trackedRead g reader target := by
+  simp [trackedSharedRead, trackedRead, readShared_eq_readCell]
+
+/-- A shared read of either Cell kind registers exactly the edge from the read
+    target to the recomputing node. -/
+theorem trackedSharedRead_registers_edge
+    (g : Graph) (reader target : NodeId)
+    (hcell : IsCell (g.node target).kind) :
+    (target, reader) ∈ (trackedSharedRead g reader target).2 := by
+  rcases hcell with hsource | hcomputed
+  · simp [trackedSharedRead, registeredReadEdges, hsource, registerReads]
+  · simp [trackedSharedRead, registeredReadEdges, hcomputed, registerReads]
 
 /-! ## Driven computed — eager materialization
 
