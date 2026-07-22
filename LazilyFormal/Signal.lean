@@ -11,7 +11,7 @@ like `SlotId`, the storage sense — for the model of the eager computed.)
 `LazilyFormal.Reactive` already fixes the *graph* half of that claim — the
 backing computed carries a concrete value after the puller runs
 (`signal_materialized_after_recompute`). What it cannot state is the part the
-spec actually leans on, because its `recomputeSlot` receives the new value from
+spec actually leans on, because its `recomputeComputed` receives the new value from
 the caller and the graph has no notion of *running a computation*:
 
 - that attaching the puller (`.eager()`) changes **when** compute runs and never
@@ -130,11 +130,11 @@ def flush (cfg : Config) (w : World) : World :=
     else { w with pending := false }
   else w
 
-/-- The `PartialEq`-guarded source write (`LazilyFormal.Reactive.setCell`). An
+/-- The `PartialEq`-guarded source write (`LazilyFormal.Reactive.setSource`). An
     equal write is a no-op. A strictly different write updates the source, marks
     the memo dirty, and raises the pending flag — which flushes immediately at
     depth `0` and is deferred to the batch boundary inside a batch. -/
-def setCell (cfg : Config) (w : World) (k : SrcId) (v : Value) : World :=
+def setSource (cfg : Config) (w : World) (k : SrcId) (v : Value) : World :=
   if w.src k = v then w
   else
     let w' : World :=
@@ -251,9 +251,9 @@ theorem flush_coherent (cfg : Config) (w : World) (hc : Coherent cfg w) :
       intro _ v hv
       exact (Option.some.inj hv).symm
 
-theorem setCell_coherent (cfg : Config) (w : World) (k : SrcId) (v : Value)
-    (hc : Coherent cfg w) : Coherent cfg (setCell cfg w k v) := by
-  unfold setCell
+theorem setSource_coherent (cfg : Config) (w : World) (k : SrcId) (v : Value)
+    (hc : Coherent cfg w) : Coherent cfg (setSource cfg w k v) := by
+  unfold setSource
   by_cases hEq : w.src k = v
   · simpa [hEq] using hc
   · simp only [hEq, if_false]
@@ -268,9 +268,9 @@ theorem setCell_coherent (cfg : Config) (w : World) (k : SrcId) (v : Value)
 
 /-- A strictly different write moves the source environment to the pointwise
     update, and an equal write leaves it there too (it was already equal). -/
-theorem setCell_src (cfg : Config) (w : World) (k : SrcId) (v : Value) :
-    (setCell cfg w k v).src = fun n => if n = k then v else w.src n := by
-  unfold setCell
+theorem setSource_src (cfg : Config) (w : World) (k : SrcId) (v : Value) :
+    (setSource cfg w k v).src = fun n => if n = k then v else w.src n := by
+  unfold setSource
   by_cases hEq : w.src k = v
   · simp only [hEq, if_true]
     funext n
@@ -317,7 +317,7 @@ inductive Op where
 /-- Execute a program, collecting the observed read values in order. -/
 def run (cfg : Config) (w : World) : List Op → World × List Value
   | [] => (w, [])
-  | .write k v :: os => run cfg (setCell cfg w k v) os
+  | .write k v :: os => run cfg (setSource cfg w k v) os
   | .read :: os =>
     let r := readSlot cfg w
     let rest := run cfg r.2 os
@@ -349,8 +349,8 @@ theorem run_reads_canonical (cfg : Config) :
     intro w hc
     cases o with
     | write k v =>
-      show (run cfg (setCell cfg w k v) os).2 = specRun cfg w.src (.write k v :: os)
-      rw [ih _ (setCell_coherent cfg w k v hc), setCell_src]
+      show (run cfg (setSource cfg w k v) os).2 = specRun cfg w.src (.write k v :: os)
+      rw [ih _ (setSource_coherent cfg w k v hc), setSource_src]
       rfl
     | read =>
       show (readSlot cfg w).1 :: (run cfg (readSlot cfg w).2 os).2
@@ -408,9 +408,9 @@ theorem flush_materialized (cfg : Config) (w : World) (hp : w.puller = true)
   | false => simpa [hpend] using hm hpend
   | true => simp only [hp, if_true]; exact ⟨rfl, rfl⟩
 
-/-- **Eager freshness at `set_cell` return.** With the puller live and no batch
+/-- **Eager freshness at `set` return.** With the puller live and no batch
     open, the backing value equals `compute` of the *current* sources the moment
-    `set_cell` returns — no read required to make it so.
+    `set` returns — no read required to make it so.
 
     Materialization is preserved, not merely established: the hypothesis and the
     conclusion are the same predicate, so this iterates over any number of
@@ -418,8 +418,8 @@ theorem flush_materialized (cfg : Config) (w : World) (hp : w.puller = true)
 theorem signal_fresh_after_set_cell (cfg : Config) (w : World) (k : SrcId)
     (v : Value) (hp : w.puller = true) (hd : w.depth = 0)
     (hm : Materialized cfg w) :
-    Materialized cfg (setCell cfg w k v) := by
-  unfold setCell
+    Materialized cfg (setSource cfg w k v) := by
+  unfold setSource
   by_cases hEq : w.src k = v
   · simpa [hEq] using hm
   · simp only [hEq, if_false, hd, if_true]
@@ -433,9 +433,9 @@ theorem signal_fresh_after_set_cell (cfg : Config) (w : World) (k : SrcId)
 theorem lazy_memo_not_fresh_after_set_cell
     (cfg : Config) (s : SrcId → Value) (k : SrcId) (v : Value)
     (hne : s k ≠ v) :
-    (setCell cfg (initMemo s) k v).dirty = true ∧
-    (setCell cfg (initMemo s) k v).computes = 0 := by
-  constructor <;> simp [setCell, initMemo, hne, flush]
+    (setSource cfg (initMemo s) k v).dirty = true ∧
+    (setSource cfg (initMemo s) k v).computes = 0 := by
+  constructor <;> simp [setSource, initMemo, hne, flush]
 
 /-! ## Batching: one compute per flush, not one per write
 
@@ -445,7 +445,7 @@ cannot see it. -/
 
 /-- Apply a run of writes in order. -/
 def applyWrites (cfg : Config) (w : World) (ws : List (SrcId × Value)) : World :=
-  ws.foldl (fun acc p => setCell cfg acc p.1 p.2) w
+  ws.foldl (fun acc p => setSource cfg acc p.1 p.2) w
 
 /-- A batch: enter, write `N` times, exit. -/
 def batch (cfg : Config) (w : World) (ws : List (SrcId × Value)) : World :=
@@ -455,14 +455,14 @@ def batch (cfg : Config) (w : World) (ws : List (SrcId × Value)) : World :=
     (the `PartialEq` guard), or it raises the pending flag and defers — and in
     the deferring case the flag is necessarily up, so the last clause reads: a
     batched write that leaves nothing pending changed nothing whatsoever. -/
-theorem setCell_deep (cfg : Config) (w : World) (k : SrcId) (v : Value)
+theorem setSource_deep (cfg : Config) (w : World) (k : SrcId) (v : Value)
     (hd : ¬ w.depth = 0) :
-    (setCell cfg w k v).depth = w.depth ∧
-    (setCell cfg w k v).computes = w.computes ∧
-    (setCell cfg w k v).puller = w.puller ∧
-    (w.pending = true → (setCell cfg w k v).pending = true) ∧
-    ((setCell cfg w k v).pending = false → setCell cfg w k v = w) := by
-  unfold setCell
+    (setSource cfg w k v).depth = w.depth ∧
+    (setSource cfg w k v).computes = w.computes ∧
+    (setSource cfg w k v).puller = w.puller ∧
+    (w.pending = true → (setSource cfg w k v).pending = true) ∧
+    ((setSource cfg w k v).pending = false → setSource cfg w k v = w) := by
+  unfold setSource
   by_cases hEq : w.src k = v
   · simp [hEq]
   · simp [hEq, hd]
@@ -480,11 +480,11 @@ theorem applyWrites_deep (cfg : Config) (ws : List (SrcId × Value)) :
   | nil => intro w _; exact ⟨rfl, rfl, rfl, fun h => h, fun _ => rfl⟩
   | cons p ps ih =>
     intro w hd
-    obtain ⟨sd, sc, sp, spend, schg⟩ := setCell_deep cfg w p.1 p.2 hd
-    have hd' : ¬ (setCell cfg w p.1 p.2).depth = 0 := by rw [sd]; exact hd
-    obtain ⟨rd, rc, rp, rpend, rchg⟩ := ih (setCell cfg w p.1 p.2) hd'
+    obtain ⟨sd, sc, sp, spend, schg⟩ := setSource_deep cfg w p.1 p.2 hd
+    have hd' : ¬ (setSource cfg w p.1 p.2).depth = 0 := by rw [sd]; exact hd
+    obtain ⟨rd, rc, rp, rpend, rchg⟩ := ih (setSource cfg w p.1 p.2) hd'
     have hstep : applyWrites cfg w (p :: ps)
-        = applyWrites cfg (setCell cfg w p.1 p.2) ps := rfl
+        = applyWrites cfg (setSource cfg w p.1 p.2) ps := rfl
     refine ⟨?_, ?_, ?_, ?_, ?_⟩
     · rw [hstep, rd, sd]
     · rw [hstep, rc, sc]
@@ -492,8 +492,8 @@ theorem applyWrites_deep (cfg : Config) (ws : List (SrcId × Value)) :
     · intro h; rw [hstep]; exact rpend (spend h)
     · intro h
       rw [hstep] at h ⊢
-      have hs : (setCell cfg w p.1 p.2).pending = false := by
-        cases hsp : (setCell cfg w p.1 p.2).pending with
+      have hs : (setSource cfg w p.1 p.2).pending = false := by
+        cases hsp : (setSource cfg w p.1 p.2).pending with
         | false => rfl
         | true => exact absurd (rpend hsp) (by rw [h]; simp)
       rw [rchg h, schg hs]
@@ -543,17 +543,17 @@ theorem batch_pull_runs_exactly_once (cfg : Config) (w : World)
     (batch cfg w ((k, v) :: ws)).computes = w.computes + 1 := by
   have hb : ¬ (beginBatch w).depth = 0 := by simp [beginBatch]
   -- the first write defers, raising the pending flag and computing nothing
-  have hfirst : setCell cfg (beginBatch w) k v
+  have hfirst : setSource cfg (beginBatch w) k v
       = { beginBatch w with
             src := fun n => if n = k then v else (beginBatch w).src n,
             dirty := true, pending := true } := by
-    simp [setCell, beginBatch, hne, hd]
-  have hd1 : ¬ (setCell cfg (beginBatch w) k v).depth = 0 := by
+    simp [setSource, beginBatch, hne, hd]
+  have hd1 : ¬ (setSource cfg (beginBatch w) k v).depth = 0 := by
     rw [hfirst]; simp [beginBatch]
   obtain ⟨ad, ac, ap, apend, _⟩ :=
-    applyWrites_deep cfg ws (setCell cfg (beginBatch w) k v) hd1
+    applyWrites_deep cfg ws (setSource cfg (beginBatch w) k v) hd1
   have hstep : applyWrites cfg (beginBatch w) ((k, v) :: ws)
-      = applyWrites cfg (setCell cfg (beginBatch w) k v) ws := rfl
+      = applyWrites cfg (setSource cfg (beginBatch w) k v) ws := rfl
   have hpend : (applyWrites cfg (beginBatch w) ((k, v) :: ws)).pending = true := by
     rw [hstep]; exact apend (by rw [hfirst])
   have hpul : (applyWrites cfg (beginBatch w) ((k, v) :: ws)).puller = true := by
@@ -576,21 +576,21 @@ theorem unbatched_writes_compute_once_per_write
     (cfg : Config) (w : World) (k : SrcId) (a b c : Value)
     (hd : w.depth = 0) (hp : w.puller = true)
     (h0 : ¬ w.src k = a) (h1 : ¬ a = b) (h2 : ¬ b = c) :
-    (setCell cfg (setCell cfg (setCell cfg w k a) k b) k c).computes
+    (setSource cfg (setSource cfg (setSource cfg w k a) k b) k c).computes
       = w.computes + 3 := by
   have step : ∀ (u : World) (x y : Value), u.depth = 0 → u.puller = true →
       ¬ u.src x = y →
-      (setCell cfg u x y).computes = u.computes + 1 ∧
-      (setCell cfg u x y).depth = 0 ∧
-      (setCell cfg u x y).puller = true ∧
-      (setCell cfg u x y).src x = y := by
+      (setSource cfg u x y).computes = u.computes + 1 ∧
+      (setSource cfg u x y).depth = 0 ∧
+      (setSource cfg u x y).puller = true ∧
+      (setSource cfg u x y).src x = y := by
     intro u x y hud hup hne
     refine ⟨?_, ?_, ?_, ?_⟩ <;>
-      simp [setCell, hne, hud, flush, recompute, hup]
+      simp [setSource, hne, hud, flush, recompute, hup]
   obtain ⟨c1, d1, p1, s1⟩ := step w k a hd hp h0
-  obtain ⟨c2, d2, p2, s2⟩ := step (setCell cfg w k a) k b d1 p1 (by rw [s1]; exact h1)
+  obtain ⟨c2, d2, p2, s2⟩ := step (setSource cfg w k a) k b d1 p1 (by rw [s1]; exact h1)
   obtain ⟨c3, _, _, _⟩ :=
-    step (setCell cfg (setCell cfg w k a) k b) k c d2 p2 (by rw [s2]; exact h2)
+    step (setSource cfg (setSource cfg w k a) k b) k c d2 p2 (by rw [s2]; exact h2)
   rw [c3, c2, c1]
 
 /-- **Freshness survives the batch boundary.** A signal that was materialized
@@ -647,20 +647,20 @@ theorem disposed_signal_reads_correctly (cfg : Config) (w : World)
 theorem disposed_signal_does_not_materialize_on_write
     (cfg : Config) (w : World) (k : SrcId) (v : Value)
     (hd : w.depth = 0) (hne : ¬ w.src k = v) :
-    (setCell cfg (disposePuller w) k v).computes = w.computes ∧
-    (setCell cfg (disposePuller w) k v).dirty = true := by
-  constructor <;> simp [setCell, disposePuller, hne, hd, flush]
+    (setSource cfg (disposePuller w) k v).computes = w.computes ∧
+    (setSource cfg (disposePuller w) k v).dirty = true := by
+  constructor <;> simp [setSource, disposePuller, hne, hd, flush]
 
 /-- The compute the write no longer performs is paid by the next read instead —
     the timing shift is the whole content of "reverts to lazy". -/
 theorem disposed_signal_computes_on_next_read
     (cfg : Config) (w : World) (k : SrcId) (v : Value)
     (hd : w.depth = 0) (hne : ¬ w.src k = v) :
-    (readSlot cfg (setCell cfg (disposePuller w) k v)).2.computes
+    (readSlot cfg (setSource cfg (disposePuller w) k v)).2.computes
       = w.computes + 1 := by
-  have hdirty : (setCell cfg (disposePuller w) k v).dirty = true :=
+  have hdirty : (setSource cfg (disposePuller w) k v).dirty = true :=
     (disposed_signal_does_not_materialize_on_write cfg w k v hd hne).2
-  have hcomp : (setCell cfg (disposePuller w) k v).computes = w.computes :=
+  have hcomp : (setSource cfg (disposePuller w) k v).computes = w.computes :=
     (disposed_signal_does_not_materialize_on_write cfg w k v hd hne).1
   unfold readSlot
   simp only [hdirty, if_true, recompute]

@@ -29,8 +29,8 @@ Proved here:
 
 - `flushBatch_empty` — an empty batch flush is the identity (no writes ⇒ no
   churn), mirroring the single-threaded empty `batch`.
-- `flushBatch_singleton_eq_setCell` — a one-write batch is observationally
-  identical to the single-threaded `setCell`: the thread-safe context *refines*
+- `flushBatch_singleton_eq_setSource` — a one-write batch is observationally
+  identical to the single-threaded `setSource`: the thread-safe context *refines*
   the single-threaded kernel, so concurrency changes neither the value nor the
   invalidation of a single write.
 - `flushBatch_dependent_dirty` — the coalesced frontier: after a batch flush, a
@@ -53,7 +53,7 @@ structure Write where
   value : Value
 
 /-- A thread-safe batch: the queue of cell writes accumulated since the last
-    flush. Concurrent `set_cell`s are linearized into this queue by the lock. -/
+    flush. Concurrent `set`s are linearized into this queue by the lock. -/
 abbrev Batch := List Write
 
 /-! ## Batch value application
@@ -64,7 +64,7 @@ at flush, over the coalesced union of changed sources' dependents. -/
 
 /-- Apply one write's value update through the `PartialEq` guard. Returns the
     updated graph and whether the write actually changed the cell's value
-    (`false` ⇒ equal-or-non-cell ⇒ no churn, exactly like `setCell`). -/
+    (`false` ⇒ equal-or-non-cell ⇒ no churn, exactly like `setSource`). -/
 def applyWrite (g : Graph) (w : Write) : Graph × Bool :=
   match (g.node w.node).value with
   | some cur => if cur = w.value then (g, false)
@@ -128,11 +128,11 @@ theorem flushBatch_empty (g : Graph) : flushBatch g [] = g := by
   rfl
 
 /-- A one-write batch is observationally identical to the single-threaded
-    `setCell`: the thread-safe context *refines* the single-threaded kernel.
+    `setSource`: the thread-safe context *refines* the single-threaded kernel.
     Concurrency (the lock, the batch queue) changes neither the written value
     nor the invalidation of a single write. -/
-theorem flushBatch_singleton_eq_setCell (g : Graph) (n : NodeId) (v : Value) :
-    flushBatch g [{ node := n, value := v }] = setCell g n v := by
+theorem flushBatch_singleton_eq_setSource (g : Graph) (n : NodeId) (v : Value) :
+    flushBatch g [{ node := n, value := v }] = setSource g n v := by
   cases hval : (g.node n).value with
   | none =>
     have haw : applyWrite g { node := n, value := v } = (g, false) := by
@@ -142,7 +142,7 @@ theorem flushBatch_singleton_eq_setCell (g : Graph) (n : NodeId) (v : Value) :
       rfl
     simp only [flushBatch]
     rw [hab]
-    simp only [unionDependents, markDirtyAll, setCell, hval]
+    simp only [unionDependents, markDirtyAll, setSource, hval]
     rfl
   | some cur =>
     by_cases heq : cur = v
@@ -155,7 +155,7 @@ theorem flushBatch_singleton_eq_setCell (g : Graph) (n : NodeId) (v : Value) :
         rfl
       simp only [flushBatch]
       rw [hab]
-      simp only [unionDependents, markDirtyAll, setCell, hval]
+      simp only [unionDependents, markDirtyAll, setSource, hval]
       rw [if_pos heq]
       rfl
     case neg =>
@@ -171,7 +171,7 @@ theorem flushBatch_singleton_eq_setCell (g : Graph) (n : NodeId) (v : Value) :
         rfl
       simp only [flushBatch]
       rw [hab]
-      simp only [unionDependents, List.append_nil, setCell, hval]
+      simp only [unionDependents, List.append_nil, setSource, hval]
       rw [if_neg heq]
 
 /-- Coalesced frontier (positive direction): after a batch flush, a dependent

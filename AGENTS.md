@@ -40,13 +40,13 @@ this repo.
   well-formedness the loose `WellFormed` does not pin down). Chart immutability
   holds by construction (pure Lean; `StepResult` carries no replacement `Chart`).
 - `LazilyFormal/Reactive.lean` — flat reactive graph kernel: the
-  `Slot -> Cell -> Signal -> Effect` family with reverse subscription edges,
+  `Source / Computed / Effect` family with reverse subscription edges,
   the `PartialEq` cell-write guard, the memo-equality suppression guard, and
   eager-`Signal` materialization. Theorems:
-  `setCell_equal_preserves_graph` (the universal "no churn on equal" guard),
-  `setCell_different_invalidates_dependents`,
-  `recomputeSlot_equal_preserves_dependents` (memo suppression),
-  `recomputeSlot_different_invalidates_dependents`,
+  `setSource_equal_preserves_graph` (the universal "no churn on equal" guard),
+  `setSource_different_invalidates_dependents`,
+  `recomputeComputed_equal_preserves_dependents` (memo suppression),
+  `recomputeComputed_different_invalidates_dependents`,
   `signal_materialized_after_recompute` (a Signal always has a materialized
   value after its puller runs). Disposal and teardown scopes (`#lzspecedgeindex`):
   `disposeNode_detaches_both_directions`, `disposeNode_idempotent`,
@@ -61,7 +61,7 @@ this repo.
   flush that serializes concurrent cell writes into one coalesced invalidation
   pass. The pure core of the thread-safe `batch` boundary; the
   lock/`Send + Sync` mechanics are language-level and have no pure encoding.
-  Theorems: `flushBatch_empty`, `flushBatch_singleton_eq_setCell` (refines the
+  Theorems: `flushBatch_empty`, `flushBatch_singleton_eq_setSource` (refines the
   single-threaded kernel), `flushBatch_dependent_dirty` (coalesced frontier),
   `flushBatch_preserves_nondependent_dirty` (glitch-freedom).
 - `LazilyFormal/Collection.lean` — keyed reactive collection (`CellMap` /
@@ -191,7 +191,7 @@ fixtures in `lazily-spec/conformance/statechart/`.
 
 This is the **formal** layer; `lazily-spec` is the **wire** layer. lazily-formal
 owns primitive types + the flat kernel + the full Harel chart + the reactive
-graph kernel (Slot/Cell/Signal/Effect) + the keyed collection (CellMap/SlotMap)
+graph kernel (Source/Computed/Effect) + the keyed collection (CellMap/SlotMap)
 + the ordered tree (CellTree) + the memoized semantic tree (SemTree) + manufactured
 identity (StableId) + the collection-level CRDTs (TextCrdt base + delta sync,
 SeqCrdt) + distributed signaling (peer FSM + roster) + the reactive queue
@@ -210,7 +210,7 @@ make check   # == lake build
 
 Pinned to Lean 4.30.0; pure stdlib, no dependencies.
 
-<!-- tsift:code-navigation v=0.1.74 -->
+<!-- tsift:code-navigation v=0.1.77 -->
 ## Code Navigation
 
 Keep this block self-contained for Codex/OpenCode prompt reuse. If this repository also ships current `.claude/skills/tsift/SKILL.md` or `runbooks/code-navigation.md`, use those deeper runbooks for command detail instead of expanding this block.

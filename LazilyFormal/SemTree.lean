@@ -16,7 +16,7 @@ The fixture pins two incremental-derivation invariants (plus a removal case):
 2. **Memo-equality guard.** If an edit leaves a subtree's *folded result* unchanged, the
    parent's fold — and hence every ancestor's — is unchanged
    (`parent_memo_guard`, `derivedForest_replace`), so no downstream consumer re-runs. This
-   is the tree-level form of `Reactive.recomputeSlot_equal_preserves_dependents`.
+   is the tree-level form of `Reactive.recomputeComputed_equal_preserves_dependents`.
 
 Removal updates the derivation by exactly the dropped subtree's folded value
 (`derivedForest_remove`) — cost proportional to the diff, not the document.

@@ -4,8 +4,8 @@
 `lazily-spec/cell-model.md` § "Materialization" fixes an axis orthogonal to cell
 *kind*: **when a derived cell's backing node is allocated**, not what it computes.
 Materialization is a **caller-provided recipe** — a keyed collection plus a per-key
-factory whose *return type* is the choice: an **input cell** or eager **signal**
-(always materialized) vs a lazy **slot** (`SlotHandle`, allocated on first observe).
+factory whose *return type* is the choice: an input **source** or eager **signal**
+(always materialized) vs a lazy **computed** (`Computed`, allocated on first observe).
 It is *not* a bespoke primitive: it is simply what `SlotMap` (a
 `ReactiveMap<K, V, H>` specialization) does, and what conforms is the observable
 behavior below, not any type. (This recipe framing exists because pinning a *type* let one binding —
@@ -78,8 +78,8 @@ inductive Mode where
 def Mode.default : Mode := Mode.eager
 
 /-- The two entry kinds a `SlotMap` holds. A `cell` entry is an input
-    (`CellHandle`) — always materialized, its value set directly. A `slot` entry
-    is derived (`SlotHandle`) — materialized eagerly or lazily per `Mode`. This is
+    (`Source`) — always materialized, its value set directly. A `slot` entry
+    is derived (`Computed`) — materialized eagerly or lazily per `Mode`. This is
     the handle-kind axis the Rust `ReactiveMap<K, V, H>` abstracts over, kept
     orthogonal to `Mode`. -/
 inductive EntryKind where

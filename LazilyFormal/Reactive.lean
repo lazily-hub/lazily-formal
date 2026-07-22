@@ -28,16 +28,16 @@ exactly like the rest of `LazilyFormal`.
 
 Proved here:
 
-- `setCell_equal_preserves_graph` — the `PartialEq` source-write guard: an equal
+- `setSource_equal_preserves_graph` — the `PartialEq` source-write guard: an equal
   write leaves the whole graph byte-identical (no churn, no downstream
   invalidation). Universal form of the wire-level "equal `set` emits no
   `CellSet` and no downstream ops" invariant.
-- `setCell_different_invalidates_dependents` — a strictly-different write marks
+- `setSource_different_invalidates_dependents` — a strictly-different write marks
   every direct dependent dirty.
-- `recomputeSlot_equal_preserves_dependents` — the computed guard: a `computed`
+- `recomputeComputed_equal_preserves_dependents` — the computed guard: a `computed`
   that recomputes with its guard returning `true` leaves every *downstream*
   dependent untouched. (The `Slot` in the identifier is the storage sense.)
-- `recomputeSlot_different_invalidates_dependents` — a strictly-different
+- `recomputeComputed_different_invalidates_dependents` — a strictly-different
   recompute marks every direct dependent dirty.
 - `signal_materialized_after_recompute` — a driven `computed`'s backing node is
   always materialized after the puller runs (no observable "unset" intermediate
@@ -259,42 +259,42 @@ theorem markDirtyAll_preserves_nonmembers
 
 /-! ## Cell writes — the `PartialEq` guard
 
-The single-writer cell-write primitive (`lazily-rs`: `CellHandle::set` /
-`Context::set_cell`). The `PartialEq` guard is the universal "no churn on
-equal" guarantee that surfaces on the wire as "equal `set_cell` emits no
+The single-writer cell-write primitive (`lazily-rs`: `Source::set` /
+`Context::set`). The `PartialEq` guard is the universal "no churn on
+equal" guarantee that surfaces on the wire as "equal `set` emits no
 `CellSet` and no downstream ops" (`lazily-spec/protocol.md` § Consistency
 invariants). -/
 
-/-- `setCell g id v`: the `PartialEq`-guarded cell write. If `id`'s current
+/-- `setSource g id v`: the `PartialEq`-guarded cell write. If `id`'s current
     value equals `v`, the graph is returned **unchanged** — no value update, no
     downstream invalidation. Otherwise the value is updated and every direct
     dependent is marked dirty. -/
-def setCell (g : Graph) (id : NodeId) (v : Value) : Graph :=
+def setSource (g : Graph) (id : NodeId) (v : Value) : Graph :=
   match (g.node id).value with
   | some cur =>
     if cur = v then g
     else markDirtyAll (setNode g id ⟨.source, some v, none, false⟩) (g.dependents id)
   | none => g   -- not a settable node; no-op
 
-/-- `setCell` of an equal value is the identity on the graph — the formal
-    statement of the wire-level "equal `set_cell` emits no `CellSet` and no
+/-- `setSource` of an equal value is the identity on the graph — the formal
+    statement of the wire-level "equal `set` emits no `CellSet` and no
     downstream ops" invariant. The whole graph is byte-identical, not just the
     node's value. -/
-theorem setCell_equal_preserves_graph
+theorem setSource_equal_preserves_graph
     (g : Graph) (id : NodeId) (cur v : Value)
     (hcur : (g.node id).value = some cur)
     (heq : cur = v) :
-    setCell g id v = g := by
-  simp [setCell, hcur, heq]
+    setSource g id v = g := by
+  simp [setSource, hcur, heq]
 
-/-- `setCell` of a strictly different value marks every direct dependent dirty. -/
-theorem setCell_different_invalidates_dependents
+/-- `setSource` of a strictly different value marks every direct dependent dirty. -/
+theorem setSource_different_invalidates_dependents
     (g : Graph) (id : NodeId) (cur v : Value)
     (hcur : (g.node id).value = some cur)
     (hne : cur ≠ v)
     (d : NodeId) (hdep : d ∈ g.dependents id) :
-    ((setCell g id v).node d).dirty = true := by
-  simp only [setCell, hcur, hne, if_false]
+    ((setSource g id v).node d).dirty = true := by
+  simp only [setSource, hcur, hne, if_false]
   exact markDirtyAll_marks_members _ _ _ hdep
 
 /-! ## Computed recompute — the equality guard
@@ -302,14 +302,15 @@ theorem setCell_different_invalidates_dependents
 The `ComputedCell` recompute primitive (`lazily-rs`: `ctx.computed` /
 `Context::get`). The guard is the universal "no churn on equal recompute"
 guarantee that surfaces on the wire as "an equal computed recompute emits no
-`SlotValue` and no downstream `Invalidate`". (`recomputeSlot` keeps its name — the
-`Slot` is the storage position the computed node occupies.) -/
+`SlotValue` and no downstream `Invalidate`". The wire keeps `SlotValue` because
+`slot` still names the arena storage position; the formal transition follows the
+public handle vocabulary and is therefore `recomputeComputed`. -/
 
-/-- `recomputeSlot g id newVal`: clear `id`'s dirty flag and cache `newVal`.
+/-- `recomputeComputed g id newVal`: clear `id`'s dirty flag and cache `newVal`.
     If `id` carries an equality guard and `newVal` equals its prior cached
     value, downstream dependents are **not** marked dirty (computed suppression).
     Otherwise every direct dependent is marked dirty. -/
-def recomputeSlot (g : Graph) (id : NodeId) (newVal : Value) : Graph :=
+def recomputeComputed (g : Graph) (id : NodeId) (newVal : Value) : Graph :=
   let prior := (g.node id).value
   let suppressed : Bool :=
     match prior, (g.node id).memoEq with
@@ -324,27 +325,27 @@ def recomputeSlot (g : Graph) (id : NodeId) (newVal : Value) : Graph :=
     returning `true` leaves every *downstream* dependent (`d ≠ id`) untouched.
     The universal form of the wire-level "equal computed recompute emits no
     `Invalidate`" invariant. -/
-theorem recomputeSlot_equal_preserves_dependents
+theorem recomputeComputed_equal_preserves_dependents
     (g : Graph) (id : NodeId) (newVal : Value)
     (hsup : (match (g.node id).value, (g.node id).memoEq with
              | some old, some eq => eq old newVal
              | _, _ => false) = true)
     (d : NodeId) (hdne : d ≠ id) :
-    ((recomputeSlot g id newVal).node d).dirty = (g.node d).dirty := by
-  simp only [recomputeSlot, hsup]
+    ((recomputeComputed g id newVal).node d).dirty = (g.node d).dirty := by
+  simp only [recomputeComputed, hsup]
   exact (congrArg NodeState.dirty
           (setNode_ne (s := ⟨.computed, some newVal, (g.node id).memoEq, false⟩) hdne.symm))
 
 /-- A strictly-different recompute (the computed guard, if present, returns `false`)
     marks every direct dependent dirty. -/
-theorem recomputeSlot_different_invalidates_dependents
+theorem recomputeComputed_different_invalidates_dependents
     (g : Graph) (id : NodeId) (newVal : Value)
     (hsup : (match (g.node id).value, (g.node id).memoEq with
              | some old, some eq => eq old newVal
              | _, _ => false) = false)
     (d : NodeId) (hdep : d ∈ g.dependents id) :
-    ((recomputeSlot g id newVal).node d).dirty = true := by
-  simp only [recomputeSlot, hsup]
+    ((recomputeComputed g id newVal).node d).dirty = true := by
+  simp only [recomputeComputed, hsup]
   exact markDirtyAll_marks_members _ _ _ hdep
 
 /-! ### `computed_ripple_when` — the custom propagate guard
@@ -359,12 +360,12 @@ already characterise every kind of guard the surface exposes — they never assu
   `memoEq = fun old new => ¬ changed old new` — the guard **suppresses** exactly
   when the value did **not** meaningfully change, i.e. propagates iff
   `changed old new`.
-* `slot(f)` installs `memoEq = none` (pass-through): `suppressed` is always
-  `false`, so `recomputeSlot_different_invalidates_dependents` applies on every
-  recompute — it always propagates.
+* The public surface never constructs a computed with `memoEq = none`: every
+  `computed` is guarded. The `none` branch keeps the transition total for
+  malformed or legacy graph states and conservatively propagates.
 
 This is the model's evidence that `computed_ripple_when` is a **propagate**
-guard, never a compute guard: `recomputeSlot` *receives* `newVal` (the compute
+guard, never a compute guard: `recomputeComputed` *receives* `newVal` (the compute
 already ran; the predicate needs `new`), and the guard only governs whether the
 dependents are marked dirty. `changed` MUST be pure in `(old, new)`; value-carried
 state (a version/counter field) is a fine input and keeps the recompute
@@ -373,15 +374,15 @@ deterministic. -/
 /-- `computed_ripple_when` suppression, stated directly: with the guard
     `memoEq = fun o n => ¬ changed o n`, a recompute whose `changed old newVal`
     is `false` leaves every downstream dependent (`d ≠ id`) untouched. A thin
-    specialisation of `recomputeSlot_equal_preserves_dependents`. -/
-theorem recomputeSlot_ripple_when_false_preserves_dependents
+    specialisation of `recomputeComputed_equal_preserves_dependents`. -/
+theorem recomputeComputed_ripple_when_false_preserves_dependents
     (g : Graph) (id : NodeId) (newVal old : Value) (changed : Value → Value → Bool)
     (hval : (g.node id).value = some old)
     (hguard : (g.node id).memoEq = some (fun o n => ! changed o n))
     (hkeep : changed old newVal = false)
     (d : NodeId) (hdne : d ≠ id) :
-    ((recomputeSlot g id newVal).node d).dirty = (g.node d).dirty := by
-  refine recomputeSlot_equal_preserves_dependents g id newVal ?_ d hdne
+    ((recomputeComputed g id newVal).node d).dirty = (g.node d).dirty := by
+  refine recomputeComputed_equal_preserves_dependents g id newVal ?_ d hdne
   simp only [hval, hguard, hkeep, Bool.not_false]
 
 /-! ## Fortified dependency tracking — edge attribution (`#lzcellkernel`)
@@ -431,7 +432,7 @@ concrete. This is the formal form of the wire-level "changed eager value emits
 `SlotValue`, never a bare `Invalidate` for its backing node" invariant.
 
 This is the *graph* half of the claim, and it is all this kernel can state:
-`recomputeSlot` receives the new value from its caller, so the model has no notion
+`recomputeComputed` receives the new value from its caller, so the model has no notion
 of *running* a computation and therefore cannot say that the puller changes only
 the timing of compute, nor how many times compute ran. `LazilyFormal.Signal`
 re-models the driven computed at that resolution — compute as a function of the
@@ -445,7 +446,7 @@ lazy computed agree on every read under every program) and
     `effect`), so after [`signalPull`] the backing computed is materialized
     regardless of whether the value changed. -/
 def signalPull (g : Graph) (slotId : NodeId) (newVal : Value) : Graph :=
-  recomputeSlot g slotId newVal
+  recomputeComputed g slotId newVal
 
 /-- After the puller runs, the backing computed carries a concrete cached
     value (no `none` / unset intermediate) and is not dirty. This is the
@@ -471,7 +472,7 @@ theorem signal_materialized_after_recompute
     congrArg NodeState.dirty (setNode_eq _)
   refine ⟨?_, ?_⟩
   · -- value = some newVal
-    simp only [signalPull, recomputeSlot]
+    simp only [signalPull, recomputeComputed]
     by_cases hsup :
         (match (g.node slotId).value, (g.node slotId).memoEq with
          | some a, some eq => eq a newVal
@@ -482,7 +483,7 @@ theorem signal_materialized_after_recompute
       rw [markDirtyAll_preserves_nonmember_node _ _ _ hnot_self]
       exact hcleared_value
   · -- dirty = false
-    simp only [signalPull, recomputeSlot]
+    simp only [signalPull, recomputeComputed]
     by_cases hsup :
         (match (g.node slotId).value, (g.node slotId).memoEq with
          | some a, some eq => eq a newVal
@@ -734,7 +735,7 @@ Two strategies for making a write observable at transitive depth are both
   own dependencies (recursively, lazy pull), then recomputes only if any
   dependency actually changed."
 
-`setCell` above implements the second: it marks only *direct* dependents, which
+`setSource` above implements the second: it marks only *direct* dependents, which
 is sufficient precisely because a read is expected to recurse. That is not an
 incompleteness in this model — it is the lazy strategy, stated.
 
@@ -770,13 +771,13 @@ def chain (v : Value) : Graph :=
       if n = 0 then [1] else if n = 1 then [2] else [] }
 
 /-- One-level invalidation reaches the direct dependent. -/
-theorem chain_setCell_marks_depth_one :
-    (((setCell (chain 1) 0 2).node 1).dirty) = true := by
+theorem chain_setSource_marks_depth_one :
+    (((setSource (chain 1) 0 2).node 1).dirty) = true := by
   decide
 
 /-- **It does not reach depth two.** The transitive dependent stays clean. -/
-theorem chain_setCell_leaves_depth_two_clean :
-    (((setCell (chain 1) 0 2).node 2).dirty) = false := by
+theorem chain_setSource_leaves_depth_two_clean :
+    (((setSource (chain 1) 0 2).node 2).dirty) = false := by
   decide
 
 /-- **The hybrid loses the write.** After a source write, a cache-trusting read
@@ -790,7 +791,7 @@ theorem chain_setCell_leaves_depth_two_clean :
     Combining "mark one level" with "trust the flag" is what loses the write, and
     neither half looks wrong in isolation — which is why this shipped twice. -/
 theorem hybrid_serves_stale_value_at_depth_two :
-    cachedRead (setCell (chain 1) 0 2) 2 = some 111 := by
+    cachedRead (setSource (chain 1) 0 2) 2 = some 111 := by
   decide
 
 /-- Eager marking over the transitive cone repairs it: marking node 1's
@@ -798,13 +799,13 @@ theorem hybrid_serves_stale_value_at_depth_two :
     fix actually applied in both bindings — the invalidation walk continues
     through a dependent slot instead of stopping at it. -/
 theorem cone_marking_reaches_depth_two :
-    ((markDirtyAll (setCell (chain 1) 0 2) ((chain 1).dependents 1)).node 2).dirty = true := by
+    ((markDirtyAll (setSource (chain 1) 0 2) ((chain 1).dependents 1)).node 2).dirty = true := by
   decide
 
 /-- And the repaired graph no longer serves a cached value at depth two — the
     read must recompute rather than answering from cache. -/
 theorem cone_marking_refuses_stale_read :
-    cachedRead (markDirtyAll (setCell (chain 1) 0 2) ((chain 1).dependents 1)) 2 = none := by
+    cachedRead (markDirtyAll (setSource (chain 1) 0 2) ((chain 1).dependents 1)) 2 = none := by
   decide
 
 end LazilyFormal.Reactive

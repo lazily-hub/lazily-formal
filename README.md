@@ -102,13 +102,13 @@ signaling:
   (`enabled`, conflict resolution via disjoint exit sets), LCA exit/enter sets,
   descent, history record-on-exit / restore-on-enter, and `send`.
 - **`LazilyFormal/Reactive.lean`** — the flat reactive graph kernel: the
-  `Slot -> Cell -> Signal -> Effect` family (node kinds, reverse subscription
+  `Source / Computed / Effect` family (node kinds, reverse subscription
   edges, the `PartialEq` cell-write guard, the memo-equality suppression guard,
   eager-`Signal` materialization, explicit disposal and teardown scopes). The pure reactive core every binding's
   `Context` implements, and the layer whose changes surface on the IPC wire as
   `CellSet` / `SlotValue` / `Invalidate`.
 - **`LazilyFormal/Signal.lean`** — the derived eager construct
-  (`Signal ≡ Slot.eager`): a memo slot plus a puller effect, modeled at the
+  (`eager Computed`): a memo slot plus a puller effect, modeled at the
   resolution where `compute` is a real function of the sources and its
   invocations are *counted*. Proves the demotion theorem (a signal and a bare
   lazy memo agree on every read, under every program), freshness at mutator
@@ -117,7 +117,7 @@ signaling:
   (`lazily-spec` § "Concurrency layers are required"): a batch flush that
   serializes concurrent cell writes into one coalesced invalidation pass. The
   pure core of the thread-safe `batch` boundary; proves it *refines* the
-  single-threaded kernel (a one-write batch is identical to `setCell`), the
+  single-threaded kernel (a one-write batch is identical to `setSource`), the
   coalesced frontier (a dependent of any changed source is dirtied), and
   glitch-freedom (a non-dependent branch is untouched).
 - **`LazilyFormal/Collection.lean`** — the keyed reactive collection
@@ -291,15 +291,15 @@ inside `states`).
 hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent`
 (reject case needs no `Coherent`).
 
-**Reactive graph kernel (`Reactive`) — the `Slot / Cell / Signal / Effect` family**
-- `setCell_equal_preserves_graph` — the `PartialEq` cell-write guard: an equal
+**Reactive graph kernel (`Reactive`) — the `Source / Computed / Effect` family**
+- `setSource_equal_preserves_graph` — the `PartialEq` cell-write guard: an equal
   write leaves the whole graph byte-identical (universal form of the wire
-  invariant "equal `set_cell` emits no `CellSet` and no downstream ops").
-- `setCell_different_invalidates_dependents` — a strictly-different write marks
+  invariant "equal `set` emits no `CellSet` and no downstream ops").
+- `setSource_different_invalidates_dependents` — a strictly-different write marks
   every direct dependent dirty.
-- `recomputeSlot_equal_preserves_dependents` — memo-equality suppression: a slot
+- `recomputeComputed_equal_preserves_dependents` — memo-equality suppression: a slot
   that recomputes to an equal value leaves its downstream dependents untouched.
-- `recomputeSlot_different_invalidates_dependents` — a strictly-different
+- `recomputeComputed_different_invalidates_dependents` — a strictly-different
   recompute marks every direct dependent dirty.
 - `signal_materialized_after_recompute` — an eager `Signal`'s backing slot is
   always materialized (concrete value, not dirty) after its puller runs; the
@@ -323,7 +323,7 @@ hypothesis; `single_region_refines_flat_machine` is proved under `Chart.Coherent
   (disposed) id starts with an empty reverse-edge set: the model-level form of
   the stale-index aliasing hazard that edge detach at disposal time closes.
 
-**Signal (`Signal`) — the derived eager construct (`Signal ≡ Slot.eager`)**
+**Signal (`Signal`) — the derived eager construct (`eager Computed`)**
 
 `Reactive` fixes the *graph* half of the signal claim; this module re-models it
 at the resolution where **compute is an event**, so that "how many times did the
@@ -337,7 +337,7 @@ instrument — the one field with no runtime counterpart).
   observes — which is what makes "Signal is not a core primitive" a proof.
 - `signal_fresh_after_set_cell` / `signal_fresh_after_batch_exit` — what *eager*
   means: with the puller live, the backing value equals `compute` of the current
-  sources the instant `set_cell` / `batch` returns, with no intervening read.
+  sources the instant `set` / `batch` returns, with no intervening read.
   Stated as preservation (same predicate in hypothesis and conclusion), so it
   iterates over any number of writes.
 - `lazy_memo_not_fresh_after_set_cell` — and the bare memo does not have it. This
@@ -358,8 +358,8 @@ instrument — the one field with no runtime counterpart).
 **SlotMap materialization (`Materialization`) — eager default / lazy opt-in (`#lzmatmode`)**
 
 The materialization axis of a `SlotMap` — the keyed map whose
-entries are input cells (`EntryKind.cell`, a `CellHandle`) or derived slots
-(`EntryKind.slot`, a `SlotHandle`). Entry kind is orthogonal to mode.
+entries are input sources (`EntryKind.cell`, a `Source`) or derived computeds
+(`EntryKind.slot`, a `Computed`). Entry kind is orthogonal to mode.
 - `cell_entries_materialized_in_every_mode` / `slot_entries_deferred_under_lazy` —
   entry *kind* ⟂ materialization *mode*: a `cell` (input) entry is present under
   either mode; an unread `slot` (derived) entry is deferred under lazy. This is
@@ -381,8 +381,8 @@ entries are input cells (`EntryKind.cell`, a `CellHandle`) or derived slots
 
 **Thread-safe reactive context (`ThreadSafe`) — the lock-serialized batch boundary**
 - `flushBatch_empty` — an empty batch flush is the identity.
-- `flushBatch_singleton_eq_setCell` — a one-write batch is observationally
-  identical to the single-threaded `setCell`: the thread-safe context *refines*
+- `flushBatch_singleton_eq_setSource` — a one-write batch is observationally
+  identical to the single-threaded `setSource`: the thread-safe context *refines*
   the single-threaded kernel (concurrency changes neither value nor
   invalidation of a single write).
 - `flushBatch_dependent_dirty` — the coalesced frontier: after a batch flush, a
@@ -523,8 +523,8 @@ of the element set. Every compute layer that has a pure-machine core is modeled:
 
 | lazily-spec compute layer (`MUST`) | lazily-formal module | Status |
 |-------------------------------------|----------------------|--------|
-| Reactive core (Cell / Slot / Effect) | `Reactive.lean` | modeled |
-| Derived `Signal ≡ Slot.eager` (read-equivalence, freshness, one pull per flush) | `Signal.lean` | modeled |
+| Reactive core (Source / Computed / Effect) | `Reactive.lean` | modeled |
+| Derived `eager Computed` (read-equivalence, freshness, one pull per flush) | `Signal.lean` | modeled |
 | SlotMap materialization (eager default / lazy opt-in, `#lzmatmode`) | `Materialization.lean` | modeled (contract; unified cell/slot map); Rust + C++ impls shipped (`SlotMap`) |
 | Keyed cell collections (`CellMap`/`CellTree`, reconciliation) | `Collection.lean`, `Tree.lean`, `Reconciliation.lean` | modeled |
 | Memoized semantic tree (`SemTree`) | `SemTree.lean` | modeled |
@@ -554,7 +554,7 @@ synchronization-model checker cannot shim).
 
 | Repo | Owns |
 |------|------|
-| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Slot/Cell/Signal/Effect) + SlotMap materialization (unified cell/slot map, eager default / lazy opt-in, observational transparency) + thread-safe batch context + keyed collection (CellMap/SlotMap) + ordered tree (CellTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle + causal receipt projection; universal proofs |
+| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Source/Computed/Effect) + SlotMap materialization (unified cell/slot map, eager default / lazy opt-in, observational transparency) + thread-safe batch context + keyed collection (CellMap/SlotMap) + ordered tree (CellTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle + causal receipt projection; universal proofs |
 | `lazily-spec` | wire protocol + JSON schemas + IPC/CRDT Lean proofs + conformance fixtures (incl. `conformance/statechart/`) |
 | `lazily-rs` / `lazily-py` / `lazily-zig` / `lazily-kt` / `lazily-js` / `lazily-dart` / `lazily-go` / `lazily-cpp` | native implementations; replay the shared conformance fixtures |
 

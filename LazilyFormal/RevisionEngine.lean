@@ -70,7 +70,7 @@ def needsRecompute (rg : RevisionGraph) (n : NodeId) : Prop :=
 
 /-! ## Revision-engine cell write — the `PartialEq` guard
 
-Like the push engine's `setCell`, the revision-engine write is `PartialEq`-guarded:
+Like the push engine's `setSource`, the revision-engine write is `PartialEq`-guarded:
 an equal value is a no-op. A strictly-different value bumps the global revision
 and the cell's `valueVersion` but does **not** walk dependents (the O(1) write
 that distinguishes revision from push). -/
@@ -91,7 +91,7 @@ def revisionSetCell (rg : RevisionGraph) (id : NodeId) (v : Value) : RevisionGra
   | none => rg
 
 /-- An equal cell write is the identity on the revision graph — same `PartialEq`
-    guard as the push engine (`setCell_equal_preserves_graph`), extended to the
+    guard as the push engine (`setSource_equal_preserves_graph`), extended to the
     revision metadata. -/
 theorem revisionSetCell_equal_preserves_graph
     (rg : RevisionGraph) (id : NodeId) (cur v : Value)
@@ -234,13 +234,13 @@ theorem get_equiv_push
     (halign : rg.graph = g)
     (hcur : (rg.graph.node id).value = some cur)
     (heq : cur = v) :
-    revisionGet (revisionSetCell rg id v) n = pushGet (setCell g id v) n := by
+    revisionGet (revisionSetCell rg id v) n = pushGet (setSource g id v) n := by
   -- An equal write is the identity under both engines.
   have hrev_id : revisionSetCell rg id v = rg :=
     revisionSetCell_equal_preserves_graph rg id cur v hcur heq
-  have hpush_id : setCell g id v = g := by
+  have hpush_id : setSource g id v = g := by
     have hcur_g : (g.node id).value = some cur := halign ▸ hcur
-    exact setCell_equal_preserves_graph g id cur v hcur_g heq
+    exact setSource_equal_preserves_graph g id cur v hcur_g heq
   rw [hrev_id, hpush_id]
   show ((verifyNode rg n).graph.node n).value = (g.node n).value
   rw [← halign]
@@ -255,13 +255,13 @@ theorem get_equiv_push_different
     (halign : rg.graph = g)
     (hcur : (rg.graph.node id).value = some cur)
     (hne : cur ≠ v) :
-    revisionGet (revisionSetCell rg id v) id = pushGet (setCell g id v) id := by
-  -- Push engine: setCell stores `some v` at `id` (markDirtyAll preserves value).
-  have hpush_val : ((setCell g id v).node id).value = some v := by
+    revisionGet (revisionSetCell rg id v) id = pushGet (setSource g id v) id := by
+  -- Push engine: setSource stores `some v` at `id` (markDirtyAll preserves value).
+  have hpush_val : ((setSource g id v).node id).value = some v := by
     have hcur_g : (g.node id).value = some cur := halign ▸ hcur
-    have hdef : setCell g id v =
+    have hdef : setSource g id v =
         markDirtyAll (setNode g id ⟨.source, some v, none, false⟩) (g.dependents id) := by
-      simp [setCell, hcur_g, hne]
+      simp [setSource, hcur_g, hne]
     rw [hdef, markDirtyAll_preserves_value]
     exact congrArg NodeState.value (setNode_eq _)
   -- Revision engine: revisionSetCell stores `some v` at `id`.
@@ -273,7 +273,7 @@ theorem get_equiv_push_different
     exact congrArg NodeState.value (setNode_eq _)
   -- revisionGet verifies then reads; verify never changes the stored value.
   show ((verifyNode (revisionSetCell rg id v) id).graph.node id).value
-       = ((setCell g id v).node id).value
+       = ((setSource g id v).node id).value
   rw [verifyNode_preserves_value]
   exact hrev_val.trans hpush_val.symm
 
