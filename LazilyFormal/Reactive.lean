@@ -347,6 +347,43 @@ theorem recomputeSlot_different_invalidates_dependents
   simp only [recomputeSlot, hsup]
   exact markDirtyAll_marks_members _ _ _ hdep
 
+/-! ### `computed_ripple_when` — the custom propagate guard
+
+`memoEq` is an **arbitrary** `Value → Value → Bool`, so the two theorems above
+already characterise every kind of guard the surface exposes — they never assume
+`memoEq` is `(· = ·)`:
+
+* `computed(f)` installs `memoEq = (· = ·)` (natural equality).
+* `computed_ripple_when(f, changed)`
+  (`lazily-rs/src/context.rs`, `Context::computed_ripple_when`) installs
+  `memoEq = fun old new => ¬ changed old new` — the guard **suppresses** exactly
+  when the value did **not** meaningfully change, i.e. propagates iff
+  `changed old new`.
+* `slot(f)` installs `memoEq = none` (pass-through): `suppressed` is always
+  `false`, so `recomputeSlot_different_invalidates_dependents` applies on every
+  recompute — it always propagates.
+
+This is the model's evidence that `computed_ripple_when` is a **propagate**
+guard, never a compute guard: `recomputeSlot` *receives* `newVal` (the compute
+already ran; the predicate needs `new`), and the guard only governs whether the
+dependents are marked dirty. `changed` MUST be pure in `(old, new)`; value-carried
+state (a version/counter field) is a fine input and keeps the recompute
+deterministic. -/
+
+/-- `computed_ripple_when` suppression, stated directly: with the guard
+    `memoEq = fun o n => ¬ changed o n`, a recompute whose `changed old newVal`
+    is `false` leaves every downstream dependent (`d ≠ id`) untouched. A thin
+    specialisation of `recomputeSlot_equal_preserves_dependents`. -/
+theorem recomputeSlot_ripple_when_false_preserves_dependents
+    (g : Graph) (id : NodeId) (newVal old : Value) (changed : Value → Value → Bool)
+    (hval : (g.node id).value = some old)
+    (hguard : (g.node id).memoEq = some (fun o n => ! changed o n))
+    (hkeep : changed old newVal = false)
+    (d : NodeId) (hdne : d ≠ id) :
+    ((recomputeSlot g id newVal).node d).dirty = (g.node d).dirty := by
+  refine recomputeSlot_equal_preserves_dependents g id newVal ?_ d hdne
+  simp only [hval, hguard, hkeep, Bool.not_false]
+
 /-! ## Driven computed — eager materialization
 
 A *driven* `computed` (`computed().eager()`, `lazily-rs/src/signal.rs`) is a
