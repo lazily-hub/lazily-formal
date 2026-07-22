@@ -384,6 +384,43 @@ theorem recomputeSlot_ripple_when_false_preserves_dependents
   refine recomputeSlot_equal_preserves_dependents g id newVal ?_ d hdne
   simp only [hval, hguard, hkeep, Bool.not_false]
 
+/-! ## Fortified dependency tracking — edge attribution (`#lzcellkernel`)
+
+A derived cell discovers its dependencies dynamically: a recompute runs the
+compute function and records every cell it reads as an edge. The recorded set is
+re-bound each recompute (dynamic deps), so the `dependents` snapshot above is
+exactly the last recompute's reads.
+
+The runtime attributes each read to *the node being recomputed*. The **fortified
+compute view** (`lazily-rs/src/context.rs`, `Compute` — the value-node id
+threaded through `ComputeOps`) carries that node id **as a value**, not as an
+ambient thread-local, so misattribution is impossible **by construction**: the
+node is a parameter of the read, not a mutable ambient that a nested or
+post-`await` read could clobber. Model a recompute of `n` as registering an edge
+`(dep, n)` for each read `dep`; then every edge is attributed to `n`. -/
+
+/-- A dependency edge `(dependency, dependent)`. -/
+abbrev Edge := NodeId × NodeId
+
+/-- The edges the recompute of `n` registers when its compute reads `deps`,
+    through the value-threaded compute view: each read attributes to `n`. -/
+def registerReads (n : NodeId) (deps : List NodeId) : List Edge :=
+  deps.map (fun dep => (dep, n))
+
+/-- **Edge attribution (fortification).** Every dependency edge registered during
+    the recompute of `n` has `n` as its dependent. Because the recomputing node
+    is a *value* parameter of the compute view (not an ambient carrier that a
+    nested / post-`await` read could clobber), this holds by construction — the
+    formal counterpart of `lazily-rs`'s non-escapable, sole-surface `Compute`
+    and of the spec's edge-attribution invariant (`cell-model.md` §"Dependency
+    tracking"). -/
+theorem registerReads_dependent_is_recomputing_node
+    (n : NodeId) (deps : List NodeId) (e : Edge) (he : e ∈ registerReads n deps) :
+    e.2 = n := by
+  simp only [registerReads, List.mem_map] at he
+  obtain ⟨_dep, _, rfl⟩ := he
+  rfl
+
 /-! ## Driven computed — eager materialization
 
 A *driven* `computed` (`computed().eager()`, `lazily-rs/src/signal.rs`) is a
