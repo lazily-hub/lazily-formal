@@ -124,6 +124,17 @@ this repo.
 - `LazilyFormal/DurableOutboxStore.lean` — the storage-independent durable
   outbox model. Theorems: `cursor_monotone`, `replay_prune_safe`, and
   `append_before_ack_replays`.
+- `LazilyFormal/DurableSink.lean` — the durable effect-sink model
+  (`#lzdurablesink`): live state is the decision seam, durable storage is a
+  write-only effect sink. Theorems: `durable_through_{monotone,no_regress}`
+  (monotone acknowledgement), `upsert_latest_{newer_dominates,idem,older_noop}`
+  and `projection_coalesces_to_settled` (a batch persists only the settled
+  epoch), `history_replay_{covers_unacked,excludes_acked,monotone_in_cursor}`
+  (lossless ordered history), `transition_authority_is_live` /
+  `persist_failure_no_ack_regress` (a sink failure never rolls live authority
+  backward), and `hydrate_reconstructs_state` / `hydrate_resumes_at_last_acked`
+  (cold restart). The `Ephemeral`-never-`Durable` separation is the existing
+  `Presence.ephemeral_never_durable`.
 - `LazilyFormal/SeqCrdt.lean` — the move-aware sequence CRDT
   (`lazily-spec/cell-model.md` § "Move-aware sequence order"): each element three
   independent LWW registers (value / position / deleted), a move a single LWW

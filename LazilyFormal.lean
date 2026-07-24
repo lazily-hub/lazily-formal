@@ -21,6 +21,7 @@ import LazilyFormal.TextCrdt
 import LazilyFormal.TextCrdtSync
 import LazilyFormal.CrdtTree
 import LazilyFormal.DurableOutboxStore
+import LazilyFormal.DurableSink
 import LazilyFormal.SeqCrdt
 import LazilyFormal.FamilySync
 import LazilyFormal.ReliableSync
