@@ -164,6 +164,25 @@ theorem current_completeErr_to_error (s : AsyncSlot) (r : Revision)
   · simp_all
   · simp_all
 
+/-- A retry out of `Error` re-enters `Computing` at the slot's current revision.
+This is what makes `Error` recoverable rather than terminal: the slot holds no
+cached result, so the next read re-spawns. A binding that replays a stored error
+to every later reader implements `retry` as the identity on `Error` and is
+therefore not a model of this state machine (`docs/async.md`, `Error → Computing`). -/
+theorem retry_from_error_recomputes (s : AsyncSlot)
+    (herr : s.state = SlotState.error) :
+    (step s SlotEvent.retry).state = SlotState.computing ∧
+    (step s SlotEvent.retry).computeRev = some s.revision := by
+  simp only [step, herr]
+  exact ⟨trivial, trivial⟩
+
+/-- `retry` is a no-op from every state other than `Error`, so the recovery path
+cannot disturb an in-flight or resolved slot. -/
+theorem retry_off_error_is_noop (s : AsyncSlot)
+    (hne : s.state ≠ SlotState.error) :
+    step s SlotEvent.retry = s := by
+  cases h : s.state <;> simp only [step, h] <;> simp_all
+
 /-- `step` preserves well-formedness: after any transition the slot's fields
 remain consistent with its lifecycle state. -/
 theorem step_preserves_wellFormed (s : AsyncSlot) (e : SlotEvent)
