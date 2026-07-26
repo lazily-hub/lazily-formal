@@ -33,7 +33,7 @@ abbrev NodeValue := Nat
 
 /-- One tree node: a value cell plus an ordered keyed child collection carrying
     its own independent per-level membership and order signals (mirroring
-    `lazily-rs`'s per-node `CellMap`). -/
+    `lazily-rs`'s per-node `SourceMap`). -/
 structure TreeNode where
   value : NodeValue
   /-- Ordered child ids. -/

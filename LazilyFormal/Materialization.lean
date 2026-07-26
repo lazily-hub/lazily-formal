@@ -6,7 +6,7 @@
 Materialization is a **caller-provided recipe** — a keyed collection plus a per-key
 factory whose *return type* is the choice: an input **source** or eager **signal**
 (always materialized) vs a lazy **computed** (`Computed`, allocated on first observe).
-It is *not* a bespoke primitive: it is simply what `SlotMap` (a
+It is *not* a bespoke primitive: it is simply what `ComputedMap` (a
 `ReactiveMap<K, V, H>` specialization) does, and what conforms is the observable
 behavior below, not any type. (This recipe framing exists because pinning a *type* let one binding —
 `lazily-zig`'s spreadsheet benchmark — diverge; pinning the *behavior* here and in
@@ -77,7 +77,7 @@ inductive Mode where
 /-- The default materialization mode. Implementations MUST default to eager. -/
 def Mode.default : Mode := Mode.eager
 
-/-- The two entry kinds a `SlotMap` holds. A `cell` entry is an input
+/-- The two entry kinds a `ComputedMap` holds. A `cell` entry is an input
     (`Source`) — always materialized, its value set directly. A `slot` entry
     is derived (`Computed`) — materialized eagerly or lazily per `Mode`. This is
     the handle-kind axis the Rust `ReactiveMap<K, V, H>` abstracts over, kept
@@ -96,7 +96,7 @@ structure Spec where
       slot (materialized eagerly, or lazily on first read). -/
   isInput : NodeId → Bool
 
-/-- A node's `SlotMap` entry kind: input cells are `cell`, derived slots
+/-- A node's `ComputedMap` entry kind: input cells are `cell`, derived slots
     are `slot`. This is `isInput` read as the handle-kind axis. -/
 def Spec.kind (s : Spec) (id : NodeId) : EntryKind :=
   if s.isInput id then EntryKind.cell else EntryKind.slot
@@ -260,7 +260,7 @@ theorem lazy_present_subset_eager (s : Spec) (id : NodeId)
 /-! ## Entry kind is orthogonal to materialization mode -/
 
 /-- A `cell` (input) entry is materialized under **either** mode — the formal
-    statement that a `SlotMap`'s entry *kind* is orthogonal to its
+    statement that a `ComputedMap`'s entry *kind* is orthogonal to its
     materialization *mode*. Choosing lazy defers only `slot` (derived) entries;
     a `cell` (input) entry is always present, eager or lazy. -/
 theorem cell_entries_materialized_in_every_mode (s : Spec) (mode : Mode) (id : NodeId)
@@ -285,7 +285,7 @@ theorem slot_entries_deferred_under_lazy (s : Spec) (id : NodeId)
 
 /-! ## Thread-safe flavor — materialization confluence
 
-The `ThreadSafeSlotMap` (`Arc<Mutex<..>>`-backed) shares this exact abstract
+The `ThreadSafeComputedMap` (`Arc<Mutex<..>>`-backed) shares this exact abstract
 model: its per-key `materialize` is the same operation, only serialized by a mutex.
 A mutex admits a concurrent workload as *some* sequential order of the per-key
 materializations. What makes that safe — what lets a `Send + Sync` map serve
@@ -293,7 +293,7 @@ observations from any thread with no per-key locking of the value axis — is th
 materialization is **confluent**: the present set and every observed value are
 independent of the order in which keys are materialized. These theorems prove that
 order-independence, so the thread-safe map is observationally identical to the
-single-threaded `SlotMap` regardless of interleaving. -/
+single-threaded `ComputedMap` regardless of interleaving. -/
 
 /-- A node is present after materializing `a` iff it was the target `a` or was
     already present. Independent of whether `a` had been materialized before —

@@ -1,9 +1,9 @@
 /-
 ! Keyed reactive collections — formal model.
 
-The formal counterpart of `lazily-rs/src/cell_family.rs` (`CellMap` / `SlotMap`,
+The formal counterpart of `lazily-rs/src/cell_family.rs` (`SourceMap` / `ComputedMap`,
 the `ReactiveMap<K, V, H>` specializations) and the `lazily-spec/cell-model.md`
-§ "Keyed cell collections" specification. `CellMap` is a hash collection whose
+§ "Keyed cell collections" specification. `SourceMap` is a hash collection whose
 **membership is itself reactive**, with one independently-tracked value cell per
 entry; `get_or_insert_with` (the shared `ReactiveMap` method) lazily mints and
 caches one entry per key on first access.
@@ -37,7 +37,7 @@ abbrev Key := Nat
 /-- Abstract per-entry value. The model exercises equality and identity. -/
 abbrev EntryValue := Nat
 
-/-- The state of one keyed reactive collection (`CellMap`).
+/-- The state of one keyed reactive collection (`SourceMap`).
 
 The three independent reactive signals are modeled explicitly as monotonic
 version counters, mirroring `lazily-rs`'s `membership` and `order_signal`
@@ -95,7 +95,7 @@ def removeKey (c : Collection) (k : Key) : Collection :=
 
 /-- A pure reorder: move `k` to position `i`. Bumps **only** the order signal;
     membership and every entry's value cell are untouched. This is the formal
-    counterpart of `lazily-rs`'s `CellMap::move_to` (`#lzcellmove`). -/
+    counterpart of `lazily-rs`'s `SourceMap::move_to` (`#lzcellmove`). -/
 def moveKey (c : Collection) (k : Key) (i : Nat) : Collection :=
   match c.order.contains k with
   | true => { c with order := (c.order.filter (fun j => j ≠ k)).insertIdx
@@ -171,7 +171,7 @@ theorem addKey_advances_membership_and_order
 
 `ReactiveMap::get_or_insert_with` (`lazily-rs/src/cell_family.rs:315`) is the
 shared keyed-map factory: it lazily mints and caches one entry per key on first
-access (`SlotMap` uses it for lazy materialization). The universal guarantee is
+access (`ComputedMap` uses it for lazy materialization). The universal guarantee is
 identity stability — the same key resolves to the same handle across requests. -/
 
 /-- A `ReactiveMap` is a `Collection` plus a per-key factory memo table that

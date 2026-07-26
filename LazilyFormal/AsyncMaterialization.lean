@@ -1,5 +1,5 @@
 /-
-! Async SlotMap materialization — formal model (eventual transparency).
+! Async ComputedMap materialization — formal model (eventual transparency).
 
 The async flavor of `Materialization`: keys map to async reactive nodes whose
 derived (slot) entries resolve *asynchronously*. Allocation (the present-set axis)
@@ -9,7 +9,7 @@ driven (an `AsyncContext.get_async` on the handle), then `resolved`. Input cells
 are resolved at build.
 
 A non-blocking read therefore returns `Option Value`: `none` while pending,
-`some v` once resolved — exactly the Rust `AsyncSlotMap::observe`
+`some v` once resolved — exactly the Rust `AsyncComputedMap::observe`
 signature. The single-threaded map's transparency law (`observe` yields the
 canonical value under either mode) weakens, for the async map, to **eventual
 transparency**: once a node resolves, its observed value is the canonical value —

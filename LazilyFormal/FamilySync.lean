@@ -1,7 +1,7 @@
 /-
 ! Reactive keyed map — distributed membership + value sync convergence (#lzfamilysync).
 
-A keyed reactive map (`ReactiveMap` / `SlotMap`; `Collection.lean`) is a *local* keyed
+A keyed reactive map (`ReactiveMap` / `ComputedMap`; `Collection.lean`) is a *local* keyed
 reactive collection.
 This module fixes the missing distributed contract: what happens when a map key
 is added or updated on one replica and its keyed op reaches another. The plain CRDT
