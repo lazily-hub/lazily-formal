@@ -2,11 +2,11 @@
 ! Async ComputedMap materialization — formal model (eventual transparency).
 
 The async flavor of `Materialization`: keys map to async reactive nodes whose
-derived (slot) entries resolve *asynchronously*. Allocation (the present-set axis)
-is already modelled in `Materialization`; this module adds the orthogonal
-**resolution** axis that async introduces — a derived slot is `pending` until it is
-driven (an `AsyncContext.get_async` on the handle), then `resolved`. Input cells
-are resolved at build.
+derived (`computed`) entries resolve *asynchronously*. Allocation (the present-set
+axis) is already modelled in `Materialization`; this module adds the orthogonal
+**resolution** axis that async introduces — a derived computed is `pending` until it
+is driven (an `AsyncContext.get_async` on the handle), then `resolved`. Input
+sources are resolved at build.
 
 A non-blocking read therefore returns `Option Value`: `none` while pending,
 `some v` once resolved — exactly the Rust `AsyncComputedMap::observe`
@@ -24,7 +24,7 @@ Proved here:
   state. The async map and the sync map agree on resolved values.
 - `observe_pending_is_none` — an unresolved (pending) read is `none`, never a stale
   or junk value.
-- `cell_resolved_at_build` — input cells are resolved at build (always `some`).
+- `source_resolved_at_build` — input sources are resolved at build (always `some`).
 - `resolve_monotone` — resolution only grows the resolved set (no un-resolution).
 - `resolve_preserves_observe` — resolving one node never changes another resolved
   node's observed value.
@@ -53,9 +53,9 @@ structure AsyncMat where
 def Canonical (s : Spec) (m : AsyncMat) : Prop :=
   ∀ n, m.resolved n = true → m.stored n = s.val n
 
-/-- Eager async build: input cells resolve immediately with their value; derived
-    slots start **pending** (allocation may be eager, but the async value is only
-    produced when the slot is driven). -/
+/-- Eager async build: input sources resolve immediately with their value; derived
+    computeds start **pending** (allocation may be eager, but the async value is only
+    produced when the computed is driven). -/
 def buildEager (s : Spec) : AsyncMat :=
   { resolved := s.isInput
   , stored := fun n => if s.isInput n = true then s.val n else 0 }
@@ -170,16 +170,16 @@ theorem resolve_preserves_observe (s : Spec) (m : AsyncMat) (hc : Canonical s m)
   have hc' : Canonical s (resolve s m id) := resolve_canonical s m id hc
   rw [hc' other (resolve_monotone s m id other hother), hc other hother]
 
-/-! ## Input cells resolve at build -/
+/-! ## Input sources resolve at build -/
 
-/-- An input `cell` entry is resolved at build — always `some`, never pending. The
-    async statement of "input cells are always materialized". -/
-theorem cell_resolved_at_build (s : Spec) (id : NodeId)
-    (hcell : s.kind id = EntryKind.cell) : (buildEager s).resolved id = true := by
+/-- An input `source` entry is resolved at build — always `some`, never pending. The
+    async statement of "input sources are always materialized". -/
+theorem source_resolved_at_build (s : Spec) (id : NodeId)
+    (hsource : s.kind id = EntryKind.source) : (buildEager s).resolved id = true := by
   have hin : s.isInput id = true := by
     by_cases h : s.isInput id = true
     · exact h
-    · simp [Spec.kind, h] at hcell
+    · simp [Spec.kind, h] at hsource
   exact hin
 
 end LazilyFormal.AsyncMaterialization

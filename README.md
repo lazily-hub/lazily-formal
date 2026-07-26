@@ -364,11 +364,12 @@ instrument — the one field with no runtime counterpart).
 **ComputedMap materialization (`Materialization`) — eager default / lazy opt-in (`#lzmatmode`)**
 
 The materialization axis of a `ComputedMap` — the keyed map whose
-entries are input sources (`EntryKind.cell`, a `Source`) or derived computeds
-(`EntryKind.slot`, a `Computed`). Entry kind is orthogonal to mode.
-- `cell_entries_materialized_in_every_mode` / `slot_entries_deferred_under_lazy` —
-  entry *kind* ⟂ materialization *mode*: a `cell` (input) entry is present under
-  either mode; an unread `slot` (derived) entry is deferred under lazy. This is
+entries are input sources (`EntryKind.source`, a `Source`) or derived computeds
+(`EntryKind.computed`, a `Computed`). Entry kind is orthogonal to mode.
+- `source_entries_materialized_in_every_mode` /
+  `computed_entries_deferred_under_lazy` —
+  entry *kind* ⟂ materialization *mode*: a `source` (input) entry is present under
+  either mode; an unread `computed` (derived) entry is deferred under lazy. This is
   the handle-kind axis the Rust `ReactiveMap<K, V, H>` abstracts over.
 - `observe_canonical` — the headline transparency law: a read yields the node's
   spec value under *either* mode (`observe (build mode spec) id = spec.val id`).
@@ -380,9 +381,9 @@ entries are input sources (`EntryKind.cell`, a `Source`) or derived computeds
 - `materialize_present_monotone` / `lazy_present_subset_eager` — deferral, not
   de-allocation: lazy only *grows* the materialized set, which is a subset of the
   eager (all-present) set.
-- `eager_materializes_all` / `lazy_defers_slots` — eager allocates every node up
-  front; lazy leaves an unread derived slot unallocated (the memory / first-touch
-  advantage).
+- `eager_materializes_all` / `lazy_defers_computeds` — eager allocates every node up
+  front; lazy leaves an unread derived computed unallocated (the memory /
+  first-touch advantage).
 - `default_mode_eager` — the default materialization mode is eager.
 
 **Thread-safe reactive context (`ThreadSafe`) — the lock-serialized batch boundary**
@@ -531,7 +532,7 @@ of the element set. Every compute layer that has a pure-machine core is modeled:
 |-------------------------------------|----------------------|--------|
 | Reactive core (Source / Computed / Effect) | `Reactive.lean` | modeled |
 | Derived `eager Computed` (read-equivalence, freshness, one pull per flush) | `Signal.lean` | modeled |
-| ComputedMap materialization (eager default / lazy opt-in, `#lzmatmode`) | `Materialization.lean` | modeled (contract; unified cell/slot map); Rust + C++ impls shipped (`ComputedMap`) |
+| ComputedMap materialization (eager default / lazy opt-in, `#lzmatmode`) | `Materialization.lean` | modeled (contract; unified source/computed map); Rust + C++ impls shipped (`ComputedMap`) |
 | Keyed cell collections (`SourceMap`/`SourceTree`, reconciliation) | `Collection.lean`, `Tree.lean`, `Reconciliation.lean` | modeled |
 | Memoized semantic tree (`SemTree`) | `SemTree.lean` | modeled |
 | Manufactured identity / stable-id alignment | `StableId.lean` | modeled |
@@ -560,7 +561,7 @@ synchronization-model checker cannot shim).
 
 | Repo | Owns |
 |------|------|
-| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Source/Computed/Effect) + ComputedMap materialization (unified cell/slot map, eager default / lazy opt-in, observational transparency) + thread-safe batch context + keyed collection (SourceMap/ComputedMap) + ordered tree (SourceTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle + causal receipt projection; universal proofs |
+| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Source/Computed/Effect) + ComputedMap materialization (unified source/computed map, eager default / lazy opt-in, observational transparency) + thread-safe batch context + keyed collection (SourceMap/ComputedMap) + ordered tree (SourceTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle + causal receipt projection; universal proofs |
 | `lazily-spec` | wire protocol + JSON schemas + IPC/CRDT Lean proofs + conformance fixtures (incl. `conformance/statechart/`) |
 | `lazily-rs` / `lazily-py` / `lazily-zig` / `lazily-kt` / `lazily-js` / `lazily-dart` / `lazily-go` / `lazily-cpp` | native implementations; replay the shared conformance fixtures |
 

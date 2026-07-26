@@ -12,10 +12,10 @@ behavior below, not any type. (This recipe framing exists because pinning a *typ
 `lazily-zig`'s spreadsheet benchmark — diverge; pinning the *behavior* here and in
 the fixtures is what keeps implementations convergent.)
 
-Entry *kind* (`EntryKind.cell` / `EntryKind.slot`, below) is the handle-kind axis,
-orthogonal to `Mode`: choosing lazy defers only `slot` entries, never `cell` ones
-(`cell_entries_materialized_in_every_mode`). Two choices govern the derived (`slot`)
-entries:
+Entry *kind* (`EntryKind.source` / `EntryKind.computed`, below) is the handle-kind
+axis, orthogonal to `Mode`: choosing lazy defers only `computed` entries, never
+`source` ones (`source_entries_materialized_in_every_mode`). Two choices govern the
+derived (`computed`) entries:
 
 - **Eager (default)** — every derived node is allocated at build time (the shared
   high-performance core; a read is a direct node access).
@@ -31,8 +31,8 @@ one an implementation must not violate when it offers an opt-in lazy factory.
 Like the rest of `LazilyFormal`, values are abstract `Nat` stand-ins: the model
 fixes *when materialization happens*, not how a value is computed. A `Spec` fixes
 each node's canonical fully-evaluated value (`val`) and whether it is an input
-cell (`isInput`, always materialized) or a derived slot (materialized eagerly or
-lazily). `observe` models a read: it materializes the node if absent (the lazy
+source (`isInput`, always materialized) or a derived computed (materialized eagerly
+or lazily). `observe` models a read: it materializes the node if absent (the lazy
 pull), then returns its stored value — a warm read returns the cached value, a
 cold read computes and caches it.
 
@@ -48,8 +48,8 @@ Proved here:
 - `materialize_present_monotone` / `lazy_present_subset_eager` — lazy only *grows*
   the materialized set (deferral, not de-allocation); the lazy set is a subset of
   the eager set (the memory-dominance direction).
-- `eager_materializes_all` / `lazy_defers_slots` — eager allocates every node up
-  front; lazy leaves an unread derived cell unallocated (the memory / first-touch
+- `eager_materializes_all` / `lazy_defers_computeds` — eager allocates every node up
+  front; lazy leaves an unread derived node unallocated (the memory / first-touch
   advantage).
 - `default_mode_eager` — the default mode is eager.
 
@@ -67,7 +67,7 @@ abbrev NodeId := Nat
     type, so a `Nat` stand-in suffices (as elsewhere in `LazilyFormal`). -/
 abbrev Value := Nat
 
-/-- Materialization strategy for derived (slot) nodes. `eager` is the shared core
+/-- Materialization strategy for derived (`computed`) nodes. `eager` is the shared core
     and the required default; `lazy` is the opt-in keyed overlay. -/
 inductive Mode where
   | eager
@@ -77,29 +77,29 @@ inductive Mode where
 /-- The default materialization mode. Implementations MUST default to eager. -/
 def Mode.default : Mode := Mode.eager
 
-/-- The two entry kinds a `ComputedMap` holds. A `cell` entry is an input
-    (`Source`) — always materialized, its value set directly. A `slot` entry
+/-- The two entry kinds a `ComputedMap` holds. A `source` entry is an input
+    (`Source`) — always materialized, its value set directly. A `computed` entry
     is derived (`Computed`) — materialized eagerly or lazily per `Mode`. This is
     the handle-kind axis the Rust `ReactiveMap<K, V, H>` abstracts over, kept
     orthogonal to `Mode`. -/
 inductive EntryKind where
-  | cell
-  | slot
+  | source
+  | computed
   deriving Repr, DecidableEq
 
 /-- The static description of a graph: each node's canonical fully-evaluated value
-    and whether it is an input cell (always materialized) or a derived slot. -/
+    and whether it is an input source (always materialized) or a derived computed. -/
 structure Spec where
   /-- The canonical, fully-evaluated value of every node. -/
   val : NodeId → Value
-  /-- `true` for an input cell (materialized in every mode), `false` for a derived
-      slot (materialized eagerly, or lazily on first read). -/
+  /-- `true` for an input source (materialized in every mode), `false` for a derived
+      computed (materialized eagerly, or lazily on first read). -/
   isInput : NodeId → Bool
 
-/-- A node's `ComputedMap` entry kind: input cells are `cell`, derived slots
-    are `slot`. This is `isInput` read as the handle-kind axis. -/
+/-- A node's `ComputedMap` entry kind: input entries are `source`, derived entries
+    are `computed`. This is `isInput` read as the handle-kind axis. -/
 def Spec.kind (s : Spec) (id : NodeId) : EntryKind :=
-  if s.isInput id then EntryKind.cell else EntryKind.slot
+  if s.isInput id then EntryKind.source else EntryKind.computed
 
 /-- Runtime materialization state: which nodes are currently allocated
     (`present`) and the value cached at each. A node with `present = false` has
@@ -118,8 +118,8 @@ def Canonical (s : Spec) (m : Mat) : Prop :=
 def buildEager (s : Spec) : Mat :=
   { present := fun _ => true, stored := s.val }
 
-/-- Lazy build: allocate only input cells; derived slots start unmaterialized.
-    An absent slot's `stored` slot holds a junk default until first read. -/
+/-- Lazy build: allocate only input sources; derived computeds start unmaterialized.
+    An absent entry's `stored` slot holds a junk default until first read. -/
 def buildLazy (s : Spec) : Mat :=
   { present := s.isInput
   , stored := fun n => if s.isInput n = true then s.val n else 0 }
@@ -245,11 +245,11 @@ theorem materialize_present_monotone (s : Spec) (m : Mat) (id n : NodeId)
 theorem eager_materializes_all (s : Spec) (id : NodeId) :
     (build Mode.eager s).present id = true := rfl
 
-/-- Lazy leaves an unread derived slot unallocated — the memory / first-touch
-    advantage: a 10M-cell workbook whose slots are never read costs O(inputs). -/
-theorem lazy_defers_slots (s : Spec) (id : NodeId)
-    (hslot : s.isInput id = false) : (build Mode.lazy s).present id = false :=
-  hslot
+/-- Lazy leaves an unread derived node unallocated — the memory / first-touch
+    advantage: a 10M-cell workbook whose computeds are never read costs O(inputs). -/
+theorem lazy_defers_computeds (s : Spec) (id : NodeId)
+    (hcomputed : s.isInput id = false) : (build Mode.lazy s).present id = false :=
+  hcomputed
 
 /-- The lazy present set is a subset of the eager present set (eager dominates on
     what is allocated). Stated as the membership direction. -/
@@ -259,28 +259,29 @@ theorem lazy_present_subset_eager (s : Spec) (id : NodeId)
 
 /-! ## Entry kind is orthogonal to materialization mode -/
 
-/-- A `cell` (input) entry is materialized under **either** mode — the formal
+/-- A `source` (input) entry is materialized under **either** mode — the formal
     statement that a `ComputedMap`'s entry *kind* is orthogonal to its
-    materialization *mode*. Choosing lazy defers only `slot` (derived) entries;
-    a `cell` (input) entry is always present, eager or lazy. -/
-theorem cell_entries_materialized_in_every_mode (s : Spec) (mode : Mode) (id : NodeId)
-    (hcell : s.kind id = EntryKind.cell) : (build mode s).present id = true := by
+    materialization *mode*. Choosing lazy defers only `computed` (derived) entries;
+    a `source` (input) entry is always present, eager or lazy. -/
+theorem source_entries_materialized_in_every_mode (s : Spec) (mode : Mode) (id : NodeId)
+    (hsource : s.kind id = EntryKind.source) : (build mode s).present id = true := by
   have hin : s.isInput id = true := by
     by_cases h : s.isInput id = true
     · exact h
-    · simp [Spec.kind, h] at hcell
+    · simp [Spec.kind, h] at hsource
   cases mode
   · rfl
   · exact hin
 
-/-- Conversely, an unread `slot` (derived) entry is deferred under lazy — the
+/-- Conversely, an unread `computed` (derived) entry is deferred under lazy — the
     memory advantage restated on the entry-kind axis. -/
-theorem slot_entries_deferred_under_lazy (s : Spec) (id : NodeId)
-    (hslot : s.kind id = EntryKind.slot) : (build Mode.lazy s).present id = false := by
+theorem computed_entries_deferred_under_lazy (s : Spec) (id : NodeId)
+    (hcomputed : s.kind id = EntryKind.computed) :
+    (build Mode.lazy s).present id = false := by
   have hin : s.isInput id = false := by
     cases hb : s.isInput id with
     | false => rfl
-    | true => simp [Spec.kind, hb] at hslot
+    | true => simp [Spec.kind, hb] at hcomputed
   exact hin
 
 /-! ## Thread-safe flavor — materialization confluence
