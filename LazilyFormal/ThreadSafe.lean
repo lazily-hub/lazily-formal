@@ -6,7 +6,7 @@ The formal counterpart of the thread-safe reactive context documented in
 `lazily-spec/docs/reactive-graph.md` § "Context layers". The thread-safe
 context is a lock-backed counterpart to the single-threaded `Reactive` kernel:
 handles are clonable, the transition function and state are `Send + Sync`, and
-— the behavioral contract this model fixes — **observers fire synchronously
+— the behavioral contract this model fixes — **Effects fire synchronously
 within the invalidating `send`/`batch` preserving glitch-free pull-based
 ordering**.
 
