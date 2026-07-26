@@ -1,7 +1,7 @@
 /-
 ! Ordered keyed reactive tree — formal model.
 
-The formal counterpart of `lazily-rs/src/cell_tree.rs` (`CellTree<Id, V>`) and
+The formal counterpart of `lazily-rs/src/cell_tree.rs` (`SourceTree<Id, V>`) and
 `lazily-spec/cell-model.md` § "Ordered keyed tree". Each node is
 `(stable id, value cell, ordered keyed child collection)`; the model fixes the
 two independence laws no finite fixture suite can establish:

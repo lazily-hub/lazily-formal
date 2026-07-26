@@ -10,8 +10,8 @@ This repo owns the executable reference *behind* the cross-language
 state-chart conformance fixtures: a total, deterministic `send` whose type is
 itself the confluence proof that all bindings agree on *every* input, not just
 the tested ones. It also owns the formal models of the lazily reactive-signals
-data-structure family — `Slot`, `Cell`, `Signal`, `Effect`, `CellMap`,
-`SlotMap`, `CellTree`, the thread-safe batch context, and the async
+data-structure family — `Slot`, `Cell`, `Signal`, `Effect`, `SourceMap`,
+`ComputedMap`, `SourceTree`, the thread-safe batch context, and the async
 effect lifecycle — that every binding implements.
 
 ## Feature Set
@@ -37,7 +37,7 @@ in `lazily-spec` after editing `coverage.json`.
 | Async reactive context | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Flat state machine | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Harel state charts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Keyed reactive maps (`ReactiveMap`: `SourceMap` / `ComputedMap`) + `CellTree` + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Keyed reactive maps (`ReactiveMap`: `SourceMap` / `ComputedMap`) + `SourceTree` + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Memoized semantic tree (`SemTree`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
@@ -122,9 +122,9 @@ eager-`Signal` materialization, explicit disposal and teardown scopes). The pure
   coalesced frontier (a dependent of any changed source is dirtied), and
   glitch-freedom (a non-dependent branch is untouched).
 - **`LazilyFormal/Collection.lean`** — the keyed reactive collection
-  (`CellMap` / `SlotMap`, the `ReactiveMap` specializations): independent value /
+  (`SourceMap` / `ComputedMap`, the `ReactiveMap` specializations): independent value /
   set-membership / order signals and atomic identity-preserving move.
-- **`LazilyFormal/Tree.lean`** — the ordered keyed reactive tree (`CellTree`):
+- **`LazilyFormal/Tree.lean`** — the ordered keyed reactive tree (`SourceTree`):
   per-node value reactivity, per-level membership/order reactivity, atomic-move
   identity preservation.
 - **`LazilyFormal/Reconciliation.lean`** — keyed reconciliation (`cell-model.md`
@@ -361,9 +361,9 @@ instrument — the one field with no runtime counterpart).
   disposing the signal: the slot stays readable and correct, a write no longer
   materializes anything, and the next read pays the compute instead.
 
-**SlotMap materialization (`Materialization`) — eager default / lazy opt-in (`#lzmatmode`)**
+**ComputedMap materialization (`Materialization`) — eager default / lazy opt-in (`#lzmatmode`)**
 
-The materialization axis of a `SlotMap` — the keyed map whose
+The materialization axis of a `ComputedMap` — the keyed map whose
 entries are input sources (`EntryKind.cell`, a `Source`) or derived computeds
 (`EntryKind.slot`, a `Computed`). Entry kind is orthogonal to mode.
 - `cell_entries_materialized_in_every_mode` / `slot_entries_deferred_under_lazy` —
@@ -398,7 +398,7 @@ entries are input sources (`EntryKind.cell`, a `Source`) or derived computeds
   dependent of no changed source keeps the dirty flag the post-write graph gave
   it (the flush never touches an unrelated branch).
 
-**Keyed collection (`Collection`) — `CellMap` / `SlotMap`**
+**Keyed collection (`Collection`) — `SourceMap` / `ComputedMap`**
 - `setEntryValue_preserves_{membership,order,siblings}` — updating one entry's
   value leaves the membership signal, the order signal, and every sibling's
   value cell untouched.
@@ -410,7 +410,7 @@ entries are input sources (`EntryKind.cell`, a `Source`) or derived computeds
 - `Family.get_idempotent_after_first` — the same key resolves to the same cell
   handle on every request (per-key identity stability across the factory).
 
-**Ordered keyed tree (`Tree`) — `CellTree`**
+**Ordered keyed tree (`Tree`) — `SourceTree`**
 - `setNodeValue_preserves_other_nodes` / `setNodeValue_preserves_node_signals` —
   per-node value reactivity: editing one node's value leaves every other node,
   and the edited node's own child collection / per-level signals, untouched.
@@ -531,8 +531,8 @@ of the element set. Every compute layer that has a pure-machine core is modeled:
 |-------------------------------------|----------------------|--------|
 | Reactive core (Source / Computed / Effect) | `Reactive.lean` | modeled |
 | Derived `eager Computed` (read-equivalence, freshness, one pull per flush) | `Signal.lean` | modeled |
-| SlotMap materialization (eager default / lazy opt-in, `#lzmatmode`) | `Materialization.lean` | modeled (contract; unified cell/slot map); Rust + C++ impls shipped (`SlotMap`) |
-| Keyed cell collections (`CellMap`/`CellTree`, reconciliation) | `Collection.lean`, `Tree.lean`, `Reconciliation.lean` | modeled |
+| ComputedMap materialization (eager default / lazy opt-in, `#lzmatmode`) | `Materialization.lean` | modeled (contract; unified cell/slot map); Rust + C++ impls shipped (`ComputedMap`) |
+| Keyed cell collections (`SourceMap`/`SourceTree`, reconciliation) | `Collection.lean`, `Tree.lean`, `Reconciliation.lean` | modeled |
 | Memoized semantic tree (`SemTree`) | `SemTree.lean` | modeled |
 | Manufactured identity / stable-id alignment | `StableId.lean` | modeled |
 | Broadcast topic (`TopicCell`) — fan-out, durable cursor restart, retention GC | `TopicCell.lean` | modeled |
@@ -560,7 +560,7 @@ synchronization-model checker cannot shim).
 
 | Repo | Owns |
 |------|------|
-| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Source/Computed/Effect) + SlotMap materialization (unified cell/slot map, eager default / lazy opt-in, observational transparency) + thread-safe batch context + keyed collection (CellMap/SlotMap) + ordered tree (CellTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle + causal receipt projection; universal proofs |
+| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Source/Computed/Effect) + ComputedMap materialization (unified cell/slot map, eager default / lazy opt-in, observational transparency) + thread-safe batch context + keyed collection (SourceMap/ComputedMap) + ordered tree (SourceTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle + causal receipt projection; universal proofs |
 | `lazily-spec` | wire protocol + JSON schemas + IPC/CRDT Lean proofs + conformance fixtures (incl. `conformance/statechart/`) |
 | `lazily-rs` / `lazily-py` / `lazily-zig` / `lazily-kt` / `lazily-js` / `lazily-dart` / `lazily-go` / `lazily-cpp` | native implementations; replay the shared conformance fixtures |
 

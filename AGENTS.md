@@ -74,7 +74,7 @@ this repo.
   `moveKey_preserves_{membership,values}`, `moveKey_advances_order`,
   `addKey_advances_membership_and_order`, `Family.get_idempotent_after_first`
   (per-key identity stability).
-- `LazilyFormal/Tree.lean` — ordered keyed reactive tree (`CellTree`): per-node
+- `LazilyFormal/Tree.lean` — ordered keyed reactive tree (`SourceTree`): per-node
   value reactivity and per-level membership/order reactivity, atomic-move
   identity preservation. Theorems:
   `setNodeValue_preserves_{other_nodes,node_signals}`,
@@ -207,7 +207,7 @@ fixtures in `lazily-spec/conformance/statechart/`.
 This is the **formal** layer; `lazily-spec` is the **wire** layer. lazily-formal
 owns primitive types + the flat kernel + the full Harel chart + the reactive
 graph kernel (Source/Computed/Effect) + the keyed collection (SourceMap/ComputedMap)
-+ the ordered tree (CellTree) + the memoized semantic tree (SemTree) + manufactured
++ the ordered tree (SourceTree) + the memoized semantic tree (SemTree) + manufactured
 identity (StableId) + the collection-level CRDTs (TextCrdt base + delta sync,
 SeqCrdt) + distributed signaling (peer FSM + roster) + the reactive queue
 (QueueCell and TopicCell; WorkQueueCell model); every
