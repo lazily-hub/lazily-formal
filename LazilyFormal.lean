@@ -33,6 +33,7 @@ import LazilyFormal.Receipt
 import LazilyFormal.Command
 import LazilyFormal.QueueCell
 import LazilyFormal.QueueReaderKinds
+import LazilyFormal.QueueFamilyReaderKinds
 import LazilyFormal.Temporal
 import LazilyFormal.RateShape
 import LazilyFormal.Membership
