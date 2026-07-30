@@ -588,3 +588,29 @@ make check   # == lake build
 ```
 
 Pinned to Lean 4.30.0 via `lean-toolchain`. No external dependencies (pure stdlib).
+
+## The lazily family
+
+`lazily-formal` sits under the whole family, not beside it. It is the neutral
+formal home every binding depends on *equally* — the bindings below are its
+consumers: they implement the models proved here and replay the conformance
+fixtures whose executable reference this repo owns.
+
+- [`lazily-spec`](https://github.com/lazily-hub/lazily-spec) — the wire layer:
+  language-agnostic protocol, JSON Schemas, and the canonical conformance corpus
+  every binding replays. It also carries the generated cross-language feature
+  matrix; read that table rather than any per-repo copy.
+- **`lazily-formal`** — the formal layer. You are here.
+
+| Repo | Language |
+|---|---|
+| [`lazily-rs`](https://github.com/lazily-hub/lazily-rs) | Rust — the reference implementation |
+| [`lazily-py`](https://github.com/lazily-hub/lazily-py) | Python |
+| [`lazily-go`](https://github.com/lazily-hub/lazily-go) | Go |
+| [`lazily-kt`](https://github.com/lazily-hub/lazily-kt) | Kotlin / JVM |
+| [`lazily-js`](https://github.com/lazily-hub/lazily-js) | JavaScript / TypeScript |
+| [`lazily-cs`](https://github.com/lazily-hub/lazily-cs) | C# / .NET |
+| [`lazily-cpp`](https://github.com/lazily-hub/lazily-cpp) | C++ |
+| [`lazily-zig`](https://github.com/lazily-hub/lazily-zig) | Zig |
+| [`lazily-dart`](https://github.com/lazily-hub/lazily-dart) | Dart / Flutter |
+| [`lazily-react`](https://github.com/lazily-hub/lazily-react) | React / Preact bindings layered over [`lazily-js`](https://github.com/lazily-hub/lazily-js) — not a separate language binding |
