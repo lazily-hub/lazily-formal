@@ -19,7 +19,7 @@ effect lifecycle — that every binding implements.
 The full `lazily` capability set and its cross-language coverage across every
 binding (`lazily-rs`, `lazily-py`, `lazily-kt`, `lazily-js`, `lazily-dart`,
 `lazily-zig`, `lazily-go`, `lazily-cpp`). Legend: ✅ shipped · `~` partial · `—` absent or not applicable.
-This table is generated from [`lazily-spec/coverage.json`](../lazily-spec/coverage.json)
+This table is generated from [`lazily-spec/coverage.json`](https://github.com/lazily-hub/lazily-spec/blob/main/coverage.json)
 — the canonical matrix with per-cell notes and platform carve-outs lives in
 lazily-spec's [Cross-Language Coverage](https://github.com/lazily-hub/lazily-spec/blob/main/docs/coverage.md). It is
 kept in sync by lazily-spec's `scripts/sync-coverage.mjs`; run `make coverage-sync`
