@@ -8,6 +8,7 @@ import LazilyFormal.RevisionEngine
 import LazilyFormal.Merge
 import LazilyFormal.Relay
 import LazilyFormal.Ingress
+import LazilyFormal.BoundaryIngress
 import LazilyFormal.Egress
 import LazilyFormal.Materialization
 import LazilyFormal.AsyncMaterialization
