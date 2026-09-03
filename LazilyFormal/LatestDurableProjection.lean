@@ -68,15 +68,18 @@ def advanceDurable (current : Option Nat) (epoch : Nat) : Option Nat :=
   | none => some epoch
   | some through => some (max through epoch)
 
-/-- An epoch is still owed exactly when it is newer than the durable frontier. -/
-def EpochPending (through : Option Nat) (epoch : Nat) : Prop :=
-  match through with
-  | none => True
-  | some durable => durable < epoch
+/-- Maximum of two optional epochs. -/
+def maxEpoch : Option Nat → Option Nat → Option Nat
+  | none, right => right
+  | left, none => left
+  | some left, some right => some (max left right)
 
-instance (through : Option Nat) (epoch : Nat) : Decidable (EpochPending through epoch) :=
-  by
-    cases through <;> simp only [EpochPending] <;> infer_instance
+/-- Highest epoch still represented anywhere in the entry.  Moving a projection
+between desired, in-flight, and durable state therefore never loses the caller's
+monotone epoch fence. -/
+def newestKnownEpoch (s : Core V) : Option Nat :=
+  maxEpoch s.durableThrough
+    (maxEpoch (s.desired.map Desired.epoch) (s.inFlight.map InFlight.epoch))
 
 /-- Status is derived from delivery state; it is never a second authority. -/
 def status (s : Core V) : Status :=
@@ -91,16 +94,13 @@ def status (s : Core V) : Status :=
 Equal or older writes are idempotent no-ops.  The existing flight is deliberately
 untouched, so supersession never mutates an already-issued command. -/
 def upsertDesired (s : Core V) (epoch : Nat) (value : V) : Core V :=
-  if EpochPending s.durableThrough epoch then
-    match s.desired with
-    | none => { s with desired := some { epoch := epoch, value := value }, retryPending := false }
-    | some current =>
-        if current.epoch < epoch then
-          { s with desired := some { epoch := epoch, value := value }, retryPending := false }
-        else
-          s
-  else
-    s
+  match newestKnownEpoch s with
+  | none => { s with desired := some { epoch := epoch, value := value }, retryPending := false }
+  | some current =>
+      if current < epoch then
+        { s with desired := some { epoch := epoch, value := value }, retryPending := false }
+      else
+        s
 
 /-- `claim(generation)`: issue the current latest desire only when the per-key
 lane is empty and the caller owns the current transport generation. -/
@@ -109,6 +109,7 @@ def claim (s : Core V) (generation : Nat) : Core V :=
     match s.inFlight, s.desired with
     | none, some desired =>
         { s with
+          desired := none
           inFlight := some {
             generation := generation
             epoch := desired.epoch
@@ -118,15 +119,18 @@ def claim (s : Core V) (generation : Nat) : Core V :=
   else
     s
 
-/-- Keep a newer desired epoch after an older in-flight epoch is acknowledged. -/
-def desiredAfterAck (desired : Option (Desired V)) (epoch : Nat) : Option (Desired V) :=
+/-- Restore a failed or disconnected flight unless a newer desired epoch already
+supersedes it. -/
+def restoreFlight (desired : Option (Desired V)) (flight : InFlight V) : Option (Desired V) :=
   match desired with
-  | none => none
-  | some current => if epoch < current.epoch then some current else none
+  | none => some { epoch := flight.epoch, value := flight.value }
+  | some current =>
+      if flight.epoch < current.epoch then some current
+      else some { epoch := flight.epoch, value := flight.value }
 
 /-- `ack_applied(generation, epoch)`: only an exact receipt for the one current
-flight may advance durability.  It clears the desire only when that desire is
-not newer than the acknowledged epoch. -/
+flight may advance durability.  Any `desired` value is necessarily a newer
+projection that arrived after the claim and is left pending. -/
 def ackApplied (s : Core V) (generation epoch : Nat) : Core V :=
   match s.inFlight with
   | none => s
@@ -134,7 +138,6 @@ def ackApplied (s : Core V) (generation epoch : Nat) : Core V :=
       if flight.generation = generation ∧ flight.epoch = epoch then
         { s with
           durableThrough := advanceDurable s.durableThrough epoch
-          desired := desiredAfterAck s.desired epoch
           inFlight := none
           retryPending := false }
       else
@@ -149,19 +152,24 @@ def failRetryable (s : Core V) (generation epoch : Nat) : Core V :=
   | some flight =>
       if flight.generation = generation ∧ flight.epoch = epoch then
         { s with
+          desired := restoreFlight s.desired flight
           inFlight := none
-          retryPending := s.desired.isSome }
+          retryPending := true }
       else
         s
 
 /-- `reconnect(new_generation)`: a strictly newer attachment invalidates the old
-flight but preserves both the desired projection and durable progress. -/
+flight and restores it to pending unless a newer desired epoch supersedes it. -/
 def reconnect (s : Core V) (newGeneration : Nat) : Core V :=
   if s.generation < newGeneration then
-    { s with
-      generation := newGeneration
-      inFlight := none
-      retryPending := s.desired.isSome }
+    match s.inFlight with
+    | none => { s with generation := newGeneration }
+    | some flight =>
+        { s with
+          generation := newGeneration
+          desired := restoreFlight s.desired flight
+          inFlight := none
+          retryPending := true }
   else
     s
 
@@ -176,38 +184,27 @@ theorem advance_durable_monotone (through : Option Nat) (epoch : Nat) :
 
 /-- A newer desired epoch replaces pending state. -/
 theorem upsert_desired_newer_wins
-    (s : Core V) (current : Desired V) (epoch : Nat) (value : V)
-    (desired : s.desired = some current)
-    (pending : EpochPending s.durableThrough epoch)
-    (newer : current.epoch < epoch) :
+    (s : Core V) (current epoch : Nat) (value : V)
+    (known : newestKnownEpoch s = some current)
+    (newer : current < epoch) :
     (upsertDesired s epoch value).desired = some { epoch := epoch, value := value } := by
-  simp [upsertDesired, desired, pending, newer]
+  simp [upsertDesired, known, newer]
 
-/-- Accepted desires are monotone by epoch: an upsert can replace the current
-desire only with a strictly newer epoch. -/
-theorem upsert_desired_epoch_monotone
-    (s : Core V) (current next : Desired V) (epoch : Nat) (value : V)
-    (before : s.desired = some current)
-    (after : (upsertDesired s epoch value).desired = some next) :
-    current.epoch ≤ next.epoch := by
-  by_cases pending : EpochPending s.durableThrough epoch
-  · by_cases newer : current.epoch < epoch
-    · simp [upsertDesired, pending, before, newer] at after
-      subst next
-      exact Nat.le_of_lt newer
-    · simp [upsertDesired, pending, before, newer] at after
-      subst next
-      exact Nat.le_refl _
-  · simp [upsertDesired, pending, before] at after
-    subst next
-    exact Nat.le_refl _
+/-- An equal or stale epoch cannot alter state.  This is the pure-state safety
+half shared by `Unchanged`, `AlreadyDurable`, `StaleEpoch`, and `EpochConflict`;
+the API result distinguishes those observations without changing the reducer. -/
+theorem upsert_desired_stale_noop
+    (s : Core V) (current epoch : Nat) (value : V)
+    (known : newestKnownEpoch s = some current)
+    (stale : epoch ≤ current) :
+    upsertDesired s epoch value = s := by
+  simp [upsertDesired, known, Nat.not_lt.mpr stale]
 
 /-- Superseding pending state never rewrites the single in-flight command. -/
 theorem upsert_desired_preserves_inflight
     (s : Core V) (epoch : Nat) (value : V) :
     (upsertDesired s epoch value).inFlight = s.inFlight := by
   simp only [upsertDesired]
-  split <;> try rfl
   split <;> try rfl
   split <;> rfl
 
@@ -226,6 +223,13 @@ theorem claim_uses_latest_desired
       generation := s.generation
       epoch := desired.epoch
       value := desired.value } := by
+  simp [claim, empty, owed]
+
+/-- Claim is a move, not a copy: the claimed desired slot becomes empty. -/
+theorem claim_moves_desired_to_inflight
+    (s : Core V) (desired : Desired V)
+    (empty : s.inFlight = none) (owed : s.desired = some desired) :
+    (claim s s.generation).desired = none := by
   simp [claim, empty, owed]
 
 /-- An acknowledgement with a stale generation is byte-for-byte inert. -/
@@ -261,57 +265,70 @@ theorem ack_does_not_clear_newer_desired
     (s : Core V) (flight : InFlight V) (desired : Desired V)
     (currentFlight : s.inFlight = some flight)
     (currentDesired : s.desired = some desired)
-    (newer : flight.epoch < desired.epoch) :
+    (_newer : flight.epoch < desired.epoch) :
     (ackApplied s flight.generation flight.epoch).desired = some desired := by
-  simp [ackApplied, currentFlight, currentDesired, desiredAfterAck, newer]
+  simp [ackApplied, currentFlight, currentDesired]
 
 /-- A matching retryable failure retains the desired projection and frees the
 lane, making another claim possible without reconstructing intent. -/
 theorem fail_retryable_retains_desired
-    (s : Core V) (flight : InFlight V)
-    (current : s.inFlight = some flight) :
-    (failRetryable s flight.generation flight.epoch).desired = s.desired ∧
+    (s : Core V) (flight : InFlight V) (desired : Desired V)
+    (current : s.inFlight = some flight)
+    (newerPending : s.desired = some desired)
+    (newer : flight.epoch < desired.epoch) :
+    (failRetryable s flight.generation flight.epoch).desired = some desired ∧
       (failRetryable s flight.generation flight.epoch).inFlight = none := by
-  simp [failRetryable, current]
+  simp [failRetryable, current, newerPending, restoreFlight, newer]
 
 /-- A matching retryable failure with outstanding intent derives `retrying`
 status rather than dropping into `idle`. -/
 theorem fail_retryable_reports_retrying
-    (s : Core V) (flight : InFlight V) (desired : Desired V)
-    (current : s.inFlight = some flight) (owed : s.desired = some desired) :
+    (s : Core V) (flight : InFlight V)
+    (current : s.inFlight = some flight) :
     status (failRetryable s flight.generation flight.epoch) = Status.retrying := by
-  simp [failRetryable, current, owed, status]
+  cases desired : s.desired with
+  | none => simp [failRetryable, current, status, restoreFlight, desired]
+  | some pending =>
+      by_cases newer : flight.epoch < pending.epoch <;>
+        simp [failRetryable, current, status, restoreFlight, desired, newer]
 
 /-- After a matching retryable failure, the same latest desire can be claimed
 again.  This is the state-machine side of retry liveness; transport fairness is
 an environmental assumption, not a pure-state theorem. -/
 theorem claim_available_after_retryable_failure
-    (s : Core V) (flight : InFlight V) (desired : Desired V)
+    (s : Core V) (flight : InFlight V)
     (generation : s.generation = flight.generation)
     (current : s.inFlight = some flight)
-    (owed : s.desired = some desired) :
+    (noNewer : s.desired = none) :
     (claim (failRetryable s flight.generation flight.epoch) s.generation).inFlight =
       some {
         generation := s.generation
-        epoch := desired.epoch
-        value := desired.value } := by
-  simp [failRetryable, current, claim, owed, generation]
+        epoch := flight.epoch
+        value := flight.value } := by
+  simp [failRetryable, current, claim, noNewer, generation, restoreFlight]
 
-/-- A newer reconnect preserves the latest desire and durable frontier while
-freeing the per-key lane. -/
-theorem reconnect_preserves_intent_and_durability
+/-- A newer reconnect preserves the durable frontier and frees the per-key lane. -/
+theorem reconnect_preserves_durability_and_frees_lane
     (s : Core V) (newGeneration : Nat) (newer : s.generation < newGeneration) :
-    (reconnect s newGeneration).desired = s.desired ∧
-      (reconnect s newGeneration).durableThrough = s.durableThrough ∧
+    (reconnect s newGeneration).durableThrough = s.durableThrough ∧
       (reconnect s newGeneration).inFlight = none := by
-  simp [reconnect, newer]
+  cases current : s.inFlight <;> simp [reconnect, newer, current]
+
+/-- With no newer pending value, reconnect requeues the disconnected flight. -/
+theorem reconnect_requeues_unsuperseded_flight
+    (s : Core V) (flight : InFlight V) (newGeneration : Nat)
+    (newer : s.generation < newGeneration)
+    (current : s.inFlight = some flight) (noNewer : s.desired = none) :
+    (reconnect s newGeneration).desired =
+      some { epoch := flight.epoch, value := flight.value } := by
+  simp [reconnect, newer, current, noNewer, restoreFlight]
 
 /-- Receipts from the pre-reconnect generation cannot affect the new attachment. -/
 theorem stale_ack_after_reconnect_noop
     (s : Core V) (newGeneration generation epoch : Nat)
     (newer : s.generation < newGeneration) :
     ackApplied (reconnect s newGeneration) generation epoch = reconnect s newGeneration := by
-  simp [reconnect, newer, ackApplied]
+  cases current : s.inFlight <;> simp [reconnect, newer, ackApplied, current]
 
 /-! ### Per-key lifting -/
 
