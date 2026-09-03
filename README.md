@@ -153,6 +153,12 @@ eager-`Signal` materialization, explicit disposal and teardown scopes). The pure
 outbox protocol. Proves durable cursors are monotone, serialized stale-handle
 writes cannot regress them, acknowledged epochs do not reappear after
 prune/replay, and append-before-ack remains replayable.
+- **`LazilyFormal/LatestDurableProjection.lean`** — the per-key latest-state
+  durable egress core. Proves desired epochs are monotone, each key has at most
+  one flight, newer pending state supersedes without mutating that flight,
+  retryable failure retains intent, `durable_through` is monotone, and stale
+  generation/epoch receipts cannot clear a newer desire. Backs
+  `lazily-spec/conformance/egress/latest_durable_projection.json`.
 - **`LazilyFormal/SeqCrdt.lean`** — the move-aware sequence CRDT (`cell-model.md`
   § "Move-aware sequence order"): each element three independent LWW registers
   (value / position / deleted), a move a *single* LWW position reassignment.
@@ -524,6 +530,7 @@ of the element set. Every compute layer that has a pure-machine core is modeled:
 | Memoized semantic tree (`SemTree`) | `SemTree.lean` | modeled |
 | Manufactured identity / stable-id alignment | `StableId.lean` | modeled |
 | Broadcast topic (`TopicCell`) — fan-out, durable cursor restart, retention GC | `TopicCell.lean` | modeled |
+| Latest durable projection egress — per-key supersession, single flight, retry, fenced acknowledgement | `LatestDurableProjection.lean` | modeled |
 | Free-text character CRDT (`TextCrdt`, base convergence + delta sync) | `TextCrdt.lean`, `TextCrdtSync.lean` | modeled |
 | Move-aware sequence CRDT (`SeqCrdt`) | `SeqCrdt.lean` | modeled |
 | Reactive family sync — membership propagation + materialize-on-ingest + derived-aggregate transparency (`#lzfamilysync`) | `FamilySync.lean` | modeled |
