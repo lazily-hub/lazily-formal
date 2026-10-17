@@ -563,11 +563,8 @@ synchronization-model checker cannot shim).
 
 ## Verify
 
-```bash
-make check   # == lake build
-```
-
-Pinned to Lean 4.30.0 via `lean-toolchain`. No external dependencies (pure stdlib).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the toolchain and verification
+command.
 
 ## The lazily family
 
