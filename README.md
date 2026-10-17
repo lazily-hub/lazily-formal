@@ -30,7 +30,7 @@ in `lazily-spec` after editing `coverage.json`.
 
 | Family | Rust | Python | Kotlin | JS | Dart | Zig | Go | C++ | C# | GDScript |
 | --------- | :----: | :------: | :------: | :--: | :----: | :---: | :--: | :---: | :--: | :--------: |
-| Reactive graph | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ~ |
+| Reactive graph | ✅ | ~ | ~ | ~ | ✅ | ✅ | ✅ | ✅ | ✅ | ~ |
 | Materialization | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | Family sync | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | Statecharts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
@@ -43,7 +43,7 @@ in `lazily-spec` after editing `coverage.json`.
 | Egress | ✅ | ~ | ~ | ~ | ~ | ~ | ~ | ~ | ~ | ~ |
 | Ingress | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | Wire codec | ✅ | ✅ | ✅ | ✅ | ~ | ✅ | ✅ | ✅ | ✅ | — |
-| Transport & FFI | ✅ | ✅ | ✅ | ~ | ~ | ✅ | ✅ | ~ | ✅ | — |
+| Transport & FFI | ✅ | ~ | ~ | ~ | ~ | ✅ | ✅ | ~ | ✅ | — |
 | Message passing | ✅ | ✅ | ✅ | ✅ | ✅ | ~ | ✅ | ✅ | ✅ | — |
 | Reliable sync | ~ | ~ | ~ | ~ | ~ | ~ | ~ | ~ | ~ | — |
 | Durable owner | ✅ | — | — | — | — | — | — | — | — | — |
