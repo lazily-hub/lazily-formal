@@ -331,8 +331,16 @@ reads. Allocation/refcount behavior remains a language-level concern.
 - `disposeHandle_matching_effect_runs_cleanup` /
   `disposeHandle_stale_runs_no_cleanup` — only the matching live effect may run
   cleanup; a stale effect handle cannot run a recycled occupant's cleanup.
-- `disposeHandle_recycled_old_handle_noop` — same-kind ABA is fenced: once a
-  slot is recycled, its old generation cannot delete the successor.
+- `disposeHandle_recycled_old_handle_noop` /
+  `disposeHandle_same_kind_aba_noop` /
+  `disposeHandle_cross_kind_recycled_noop` — both same-kind ABA and cross-kind
+  recycling are whole-arena no-ops: the old generation cannot delete the
+  successor.
+- `disposeHandle_generation_mismatch_refines_conformance` /
+  `disposeHandle_recycled_old_handle_refines_conformance` — the whole-state
+  no-op refines to the successor node/value/kind, reverse edges, and cleanup-log
+  observations in lazily-spec's full stale-handle-kind × successor-kind
+  executable conformance matrix.
 - `disposeHandleScope_eq_disposeHandles` /
   `disposeHandles_stale_head_noop` — teardown scopes retain full occupant
   identities and skip stale members while folding matching disposals in reverse

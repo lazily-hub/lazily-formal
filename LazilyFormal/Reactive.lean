@@ -58,6 +58,12 @@ Proved here:
   generation and node kind before it reaches the graph mutation primitive.
   A stale or cross-kind-recycled handle leaves graph state and cleanup history
   byte-identical; only a matching live effect appends a cleanup event.
+- `disposeHandle_same_kind_aba_noop` /
+  `disposeHandle_cross_kind_recycled_noop` — both recycling cases are stated
+  end to end as whole-arena no-ops, while
+  `disposeHandle_generation_mismatch_refines_conformance` projects that stronger
+  result onto the successor node, its reverse edges, and cleanup history that
+  the executable stale-handle fixture observes.
 - `hybrid_serves_stale_value_at_depth_two` — eager cone marking and lazy pull
   are each sound, but *combining* one-level marking with a cache-trusting read
   loses writes at depth 2. A shipped defect in two bindings, reduced to three
@@ -656,6 +662,13 @@ Proved here:
 - `disposeHandle_recycled_old_handle_noop` — after a slot is recycled, the old
   generation cannot delete its successor, even when the successor has the same
   node kind.
+- `disposeHandle_same_kind_aba_noop` and
+  `disposeHandle_cross_kind_recycled_noop` — the two recycling classes named by
+  the normative spec are whole-arena no-ops.
+- `disposeHandle_generation_mismatch_refines_conformance` and
+  `disposeHandle_recycled_old_handle_refines_conformance` — the stronger no-op
+  law preserves exactly the successor node/value/kind, reverse edges, and
+  cleanup log observed by the executable stale-handle conformance matrix.
 - `disposeHandleScope_eq_disposeHandles` and
   `disposeHandles_stale_head_noop` — a scope retains full occupant identities,
   is a reverse-creation-order fold of validated disposals, and skips stale
@@ -777,6 +790,38 @@ theorem disposeHandle_stale_runs_no_cleanup (a : Arena) (h : Handle)
     (disposeHandle a h).cleanupLog = a.cleanupLog := by
   rw [disposeHandle_stale_noop a h stale]
 
+/-- The observable projection exercised by the executable stale-handle
+    conformance matrix. `node` equality preserves kind, readability,
+    writability, value, and dirty state; `dependents` equality preserves the
+    model's complete reverse-edge snapshot; cleanup equality prevents either
+    the dead occupant's or the successor's cleanup from running. -/
+def Arena.SuccessorObservationPreserved
+    (before after : Arena) (successor : NodeId) : Prop :=
+  after.graph.node successor = before.graph.node successor ∧
+  after.graph.dependents successor = before.graph.dependents successor ∧
+  after.cleanupLog = before.cleanupLog
+
+/-- A rejected stale handle preserves every conformance-visible successor
+    observation. This is a projection of the stronger whole-arena no-op law. -/
+theorem disposeHandle_stale_preserves_successor_observation
+    (a : Arena) (h : Handle) (successor : NodeId)
+    (stale : ¬ h.Matches a) :
+    Arena.SuccessorObservationPreserved a (disposeHandle a h) successor := by
+  rw [disposeHandle_stale_noop a h stale]
+  exact ⟨rfl, rfl, rfl⟩
+
+/-- The refinement obligation shared by all nine stale-handle-kind ×
+    successor-kind conformance scenarios: once occupant generations differ,
+    disposal through the old handle preserves the successor node, its reverse
+    edges, and cleanup history. -/
+theorem disposeHandle_generation_mismatch_refines_conformance
+    (a : Arena) (h : Handle) (successor : NodeId)
+    (stale : a.generation h.slot ≠ h.generation) :
+    Arena.SuccessorObservationPreserved a (disposeHandle a h) successor := by
+  apply disposeHandle_stale_preserves_successor_observation
+  intro valid
+  exact stale valid.2.1
+
 /-- A successful disposal advances the slot generation, making every copy of
     the just-disposed handle stale before that slot can be occupied again. -/
 theorem disposeHandle_matching_advances_generation (a : Arena) (h : Handle)
@@ -798,6 +843,39 @@ theorem disposeHandle_recycled_old_handle_noop
     disposeHandle recycled h = recycled := by
   apply disposeHandle_generation_mismatch_noop
   simp [recycleNode, disposeHandle, valid, valid.2.1]
+
+/-- Same-kind ABA, named exactly as the normative disposal contract states it:
+    generation fencing makes the old handle a whole-arena no-op even though a
+    kind check alone cannot distinguish the successor. -/
+theorem disposeHandle_same_kind_aba_noop
+    (a : Arena) (h : Handle) (fresh : NodeState) (valid : h.Matches a)
+    (_sameKind : fresh.kind = h.kind) :
+    let recycled := recycleNode (disposeHandle a h) h.slot fresh
+    disposeHandle recycled h = recycled := by
+  exact disposeHandle_recycled_old_handle_noop a h fresh valid
+
+/-- Cross-kind recycling is independently fenced by the kind check and leaves
+    the whole arena unchanged. -/
+theorem disposeHandle_cross_kind_recycled_noop
+    (a : Arena) (h : Handle) (fresh : NodeState) (valid : h.Matches a)
+    (crossKind : fresh.kind ≠ h.kind) :
+    let recycled := recycleNode (disposeHandle a h) h.slot fresh
+    disposeHandle recycled h = recycled := by
+  apply disposeHandle_kind_mismatch_noop
+  simpa [recycleNode, setNode] using crossKind
+
+/-- End-to-end refinement from slot recycling to the executable fixture's
+    observations. Because this theorem is polymorphic in both node kinds, it
+    discharges the full stale-handle-kind × successor-kind matrix rather than
+    enumerating nine logically identical cases. -/
+theorem disposeHandle_recycled_old_handle_refines_conformance
+    (a : Arena) (h : Handle) (fresh : NodeState) (valid : h.Matches a) :
+    let recycled := recycleNode (disposeHandle a h) h.slot fresh
+    Arena.SuccessorObservationPreserved
+      recycled (disposeHandle recycled h) h.slot := by
+  dsimp only
+  rw [disposeHandle_recycled_old_handle_noop a h fresh valid]
+  exact ⟨rfl, rfl, rfl⟩
 
 /-- Dispose a sequence of public handles. Every member crosses the same
     generation-and-kind validation as an individual disposal. -/
