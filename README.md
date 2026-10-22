@@ -94,7 +94,8 @@ signaling:
 `Source / Computed / Effect` family (node kinds, reverse subscription
 edges, unified ordinary/shared reads across both Cell kinds, the `PartialEq`
 cell-write guard, the memo-equality suppression guard,
-eager-`Signal` materialization, explicit disposal and teardown scopes). The pure reactive core every binding's
+eager-`Signal` materialization, generation- and kind-checked disposal, and
+teardown scopes). The pure reactive core every binding's
   `Context` implements, and the layer whose changes surface on the IPC wire as
   `CellSet` / `SlotValue` / `Invalidate`.
 - **`LazilyFormal/Signal.lean`** — the derived eager construct
@@ -323,6 +324,19 @@ reads. Allocation/refcount behavior remains a language-level concern.
 - `disposeNode_recycled_id_inherits_nothing` — a node minted at a recycled
   (disposed) id starts with an empty reverse-edge set: the model-level form of
   the stale-index aliasing hazard that edge detach at disposal time closes.
+- `disposeHandle_stale_noop` / `disposeHandle_generation_mismatch_noop` /
+  `disposeHandle_kind_mismatch_noop` — disposal validates the full
+  `(slot, generation, kind)` identity before graph mutation; a stale or
+  cross-kind-recycled handle leaves the arena byte-identical.
+- `disposeHandle_matching_effect_runs_cleanup` /
+  `disposeHandle_stale_runs_no_cleanup` — only the matching live effect may run
+  cleanup; a stale effect handle cannot run a recycled occupant's cleanup.
+- `disposeHandle_recycled_old_handle_noop` — same-kind ABA is fenced: once a
+  slot is recycled, its old generation cannot delete the successor.
+- `disposeHandleScope_eq_disposeHandles` /
+  `disposeHandles_stale_head_noop` — teardown scopes retain full occupant
+  identities and skip stale members while folding matching disposals in reverse
+  creation order.
 
 **Signal (`Signal`) — the derived eager construct (`eager Computed`)**
 
