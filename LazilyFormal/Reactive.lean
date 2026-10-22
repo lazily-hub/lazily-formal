@@ -53,6 +53,11 @@ Proved here:
   *both* directions, and ending a teardown scope (`scope()`) is observationally
   equal to disposing each member individually. See § "Disposal and teardown
   scopes" below.
+- `disposeHandle_stale_noop` / `disposeHandle_generation_mismatch_noop` /
+  `disposeHandle_kind_mismatch_noop` — public disposal validates a handle's
+  generation and node kind before it reaches the graph mutation primitive.
+  A stale or cross-kind-recycled handle leaves graph state and cleanup history
+  byte-identical; only a matching live effect appends a cleanup event.
 - `hybrid_serves_stale_value_at_depth_two` — eager cone marking and lazy pull
   are each sound, but *combining* one-level marking with a cache-trusting read
   loses writes at depth 2. A shipped defect in two bindings, reduced to three
@@ -609,6 +614,11 @@ therefore makes disposal a *graph* operation, not a refcount:
   `.value = some _` is simply unavailable at a disposed id. The model does not
   encode the *throw*; it fixes the observable state that makes reading
   meaningless.
+- **Public disposal is identity-fenced.** `disposeHandle` validates the slot's
+  generation and current node kind before calling `disposeNode`. A stale handle
+  is an idempotent whole-arena no-op, including the cleanup log. This closes
+  same-kind ABA as well as cross-kind recycling; only a matching live `effect`
+  may append its cleanup event.
 - **A teardown scope is a set and a moment, nothing more.** `Scope` records the
   ids created through it (`TeardownScope.owned`), and `disposeScope` tears the
   whole set down in one pass. The load-bearing theorem is
@@ -637,7 +647,19 @@ Proved here:
   id starts with an empty reverse-edge set. `dispose_slot` pushes the id onto
   `free_ids`, so a later `computed`/`cell` can land on it; without the edge
   detach above, the fresh node would alias a stale index and inherit
-  invalidations meant for its dead predecessor. -/
+  invalidations meant for its dead predecessor.
+- `disposeHandle_stale_noop`, `disposeHandle_generation_mismatch_noop`, and
+  `disposeHandle_kind_mismatch_noop` — rejected handles mutate nothing.
+- `disposeHandle_matching_effect_runs_cleanup` and
+  `disposeHandle_stale_runs_no_cleanup` — cleanup belongs only to the matching
+  live effect occupant.
+- `disposeHandle_recycled_old_handle_noop` — after a slot is recycled, the old
+  generation cannot delete its successor, even when the successor has the same
+  node kind.
+- `disposeHandleScope_eq_disposeHandles` and
+  `disposeHandles_stale_head_noop` — a scope retains full occupant identities,
+  is a reverse-creation-order fold of validated disposals, and skips stale
+  members. -/
 
 /-- The cleared arena entry left behind by disposal: no kind of live node, no
     value, no memo guard, not scheduled. -/
@@ -656,15 +678,165 @@ def disposeNode (g : Graph) (id : NodeId) : Graph where
   dependents := fun n =>
     if n = id then [] else (g.dependents n).filter (fun d => d != id)
 
+/-! ### Generation- and kind-checked public disposal (`#lzstalehandlespec`)
+
+`disposeNode` above is the trusted graph mutation primitive: it assumes the
+caller has already resolved the exact live occupant. Public handles cannot make
+that assumption. An arena slot can be recycled, so the handle identity is the
+triple `(slot, generation, kind)`. Disposal checks all three fields before it
+detaches an edge or runs a cleanup.
+
+The cleanup log makes the effect half observable. It is intentionally outside
+`Graph`: cleanups are side effects, while `Graph` remains the pure node/edge
+state used by the existing scope proofs. -/
+
+/-- Public identity for one reactive-node occupant. `slot` alone is not an
+    identity: recycling keeps the slot but advances `generation`. -/
+structure Handle where
+  slot : NodeId
+  generation : Nat
+  kind : NodeKind
+  deriving Repr, DecidableEq
+
+/-- Arena authority needed to validate a handle before graph mutation. -/
+structure Arena where
+  graph : Graph
+  generation : NodeId → Nat
+  /-- Effect cleanups, in the order in which matching live effects were
+      disposed. Non-effects and rejected handles never append here. -/
+  cleanupLog : List NodeId
+
+/-- A handle matches exactly one live occupant: generation and kind agree and
+    the handle does not name the cleared `disposed` sentinel. -/
+def Handle.Matches (h : Handle) (a : Arena) : Prop :=
+  h.kind ≠ .disposed ∧
+    a.generation h.slot = h.generation ∧
+    (a.graph.node h.slot).kind = h.kind
+
+instance (h : Handle) (a : Arena) : Decidable (h.Matches a) := by
+  unfold Handle.Matches
+  infer_instance
+
+/-- Dispose through a public handle. Validation is sequenced before every
+    mutation: a mismatch returns the entire arena unchanged. A successful
+    disposal clears/detaches the matching node, advances the slot generation,
+    and appends a cleanup event exactly when that occupant is an effect. -/
+def disposeHandle (a : Arena) (h : Handle) : Arena :=
+  if h.Matches a then
+    { graph := disposeNode a.graph h.slot
+      generation := fun n => if n = h.slot then a.generation n + 1 else a.generation n
+      cleanupLog := if h.kind = .effect then a.cleanupLog ++ [h.slot] else a.cleanupLog }
+  else
+    a
+
+/-- The complete stale-handle contract: validation failure is an idempotent
+    no-op over graph state, generations, and cleanup history. -/
+theorem disposeHandle_stale_noop (a : Arena) (h : Handle)
+    (stale : ¬ h.Matches a) : disposeHandle a h = a := by
+  simp [disposeHandle, stale]
+
+/-- A generation mismatch (including same-kind ABA recycling) cannot delete the
+    current occupant or run any cleanup. -/
+theorem disposeHandle_generation_mismatch_noop (a : Arena) (h : Handle)
+    (stale : a.generation h.slot ≠ h.generation) : disposeHandle a h = a := by
+  apply disposeHandle_stale_noop
+  intro valid
+  exact stale valid.2.1
+
+/-- A cross-kind recycled slot is also rejected before mutation, independently
+    of whether its generation representation happened to compare equal. -/
+theorem disposeHandle_kind_mismatch_noop (a : Arena) (h : Handle)
+    (crossKind : (a.graph.node h.slot).kind ≠ h.kind) : disposeHandle a h = a := by
+  apply disposeHandle_stale_noop
+  intro valid
+  exact crossKind valid.2.2
+
+/-- A matching handle reaches the raw graph primitive and therefore performs
+    the normal bidirectional detach. -/
+theorem disposeHandle_matching_graph (a : Arena) (h : Handle)
+    (valid : h.Matches a) :
+    (disposeHandle a h).graph = disposeNode a.graph h.slot := by
+  simp [disposeHandle, valid]
+
+/-- Only a matching live effect may run cleanup. -/
+theorem disposeHandle_matching_effect_runs_cleanup (a : Arena) (h : Handle)
+    (valid : h.Matches a) (effect : h.kind = .effect) :
+    (disposeHandle a h).cleanupLog = a.cleanupLog ++ [h.slot] := by
+  simp [disposeHandle, valid, effect]
+
+/-- Matching live source/computed disposal changes no cleanup history. -/
+theorem disposeHandle_matching_non_effect_runs_no_cleanup (a : Arena) (h : Handle)
+    (valid : h.Matches a) (notEffect : h.kind ≠ .effect) :
+    (disposeHandle a h).cleanupLog = a.cleanupLog := by
+  simp [disposeHandle, valid, notEffect]
+
+/-- Stale effect disposal cannot run the cleanup belonging to a recycled
+    occupant. This is a named projection of the whole-arena no-op theorem. -/
+theorem disposeHandle_stale_runs_no_cleanup (a : Arena) (h : Handle)
+    (stale : ¬ h.Matches a) :
+    (disposeHandle a h).cleanupLog = a.cleanupLog := by
+  rw [disposeHandle_stale_noop a h stale]
+
+/-- A successful disposal advances the slot generation, making every copy of
+    the just-disposed handle stale before that slot can be occupied again. -/
+theorem disposeHandle_matching_advances_generation (a : Arena) (h : Handle)
+    (valid : h.Matches a) :
+    (disposeHandle a h).generation h.slot = a.generation h.slot + 1 := by
+  simp [disposeHandle, valid]
+
+/-- Re-mint a node in an already-cleared slot. The current generation is retained;
+    it was advanced by the successful disposal that freed the slot. -/
+def recycleNode (a : Arena) (slot : NodeId) (fresh : NodeState) : Arena :=
+  { a with graph := setNode a.graph slot fresh }
+
+/-- The ABA case, stated end to end: after a matching occupant is disposed and
+    its slot is recycled (even to the same kind), the old handle cannot delete
+    the successor or run its cleanup. -/
+theorem disposeHandle_recycled_old_handle_noop
+    (a : Arena) (h : Handle) (fresh : NodeState) (valid : h.Matches a) :
+    let recycled := recycleNode (disposeHandle a h) h.slot fresh
+    disposeHandle recycled h = recycled := by
+  apply disposeHandle_generation_mismatch_noop
+  simp [recycleNode, disposeHandle, valid, valid.2.1]
+
+/-- Dispose a sequence of public handles. Every member crosses the same
+    generation-and-kind validation as an individual disposal. -/
+def disposeHandles (a : Arena) (handles : List Handle) : Arena :=
+  handles.foldl disposeHandle a
+
+/-- Public teardown-scope membership retains occupant identities, not raw
+    recyclable slots. -/
+structure HandleScope where
+  members : List Handle
+
+/-- End a public teardown scope in reverse creation order so observable effect
+    cleanup order is fixed. Graph-state order independence is proved below by
+    the raw, already-validated `disposeScope_eq_disposeAll` theorem. -/
+def disposeHandleScope (a : Arena) (scope : HandleScope) : Arena :=
+  disposeHandles a scope.members.reverse
+
+/-- Scope teardown is exactly a fold of individually validated disposals. -/
+theorem disposeHandleScope_eq_disposeHandles (a : Arena) (scope : HandleScope) :
+    disposeHandleScope a scope = disposeHandles a scope.members.reverse := rfl
+
+/-- A stale scope member is skipped without changing the arena before the
+    remaining members are processed. In particular it cannot delete a node
+    that recycled the member's slot before scope teardown. -/
+theorem disposeHandles_stale_head_noop
+    (a : Arena) (h : Handle) (rest : List Handle) (stale : ¬ h.Matches a) :
+    disposeHandles a (h :: rest) = disposeHandles a rest := by
+  simp [disposeHandles, disposeHandle_stale_noop a h stale]
+
 /-- Dispose every node in `ids`, folding left to right — the individual-disposal
     baseline that [`disposeScope_eq_disposeAll`] measures scope teardown
     against. Mirrors [`markDirtyAll`]. -/
 def disposeAll (g : Graph) (ids : List NodeId) : Graph :=
   ids.foldl (fun acc d => disposeNode acc d) g
 
-/-- A teardown scope (`TeardownScope`): the ids created through it. It records
-    *only* ids — the node kinds are read back from the graph at teardown — which
-    is why the scope needs no disposal logic of its own. -/
+/-- Raw graph-state projection of a teardown scope after public
+    generation/kind validation has selected the matching live members. Public
+    scope membership is `HandleScope`; this id set exists to prove that the
+    graph mutation itself is order-independent. -/
 structure Scope where
   members : List NodeId
 
