@@ -11,7 +11,7 @@ evidence and are not transcribed.
 Regenerate with `make bridge-sync`; `make check` fails when this file no
 longer matches the canonical corpus. Source fixtures (sha256):
 
-* `lazily-spec/conformance/egress/effect_cas.json` — `0fbb4d6a7d4a308b592c76dac6684539efa11865dc1baed65f12a56240844447`
+* `lazily-spec/conformance/egress/effect_cas.json` — `731f5f03c6199eaf43f49efd5cdc64add0e85b9ce41bd4759ba2f27eebb6f774`
 -/
 
 import LazilyFormal.EffectCas
@@ -143,10 +143,14 @@ def ordered_plan_resumes_after_partial_success : Scenario := {
     .claim (.claimed { identity := 19, step := 0, attempt := 1, expected := 10, payload := 17 })),
     (.applied 2 0 20 11,
     .applied (.stepApplied 1)),
+    (.upsert { identity := 19, epoch := 1, key := 2, expected := 10, plan := [17, 18] },
+    .upsert .unchanged),
     (.reconnect 11,
     .reconnect (.advanced 11 0 0)),
     (.claim 2 11 0 (some 1),
     .claim (.claimed { identity := 19, step := 1, attempt := 1, expected := 11, payload := 18 })),
+    (.upsert { identity := 19, epoch := 1, key := 2, expected := 10, plan := [17, 18] },
+    .upsert .unchanged),
     (.applied 2 1 21 12,
     .applied (.completed 1))]
   final := [

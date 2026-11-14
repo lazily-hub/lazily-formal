@@ -149,8 +149,10 @@ this repo.
   `step_nextSequence_monotone`, `step_watermark_monotone`,
   `stale_generation_preserves_state`, `reconnect_advances_and_preserves_ack`,
   `reconnect_replays_everything`, `step_window_bounded`, `step_preserves_inv`
-  (no duplicated retained record), `step_preserves_ackInv` +
-  `ack_beyond_boundary_strands_record` (the unbounded-ACK spec gap),
+  (no duplicated retained record), `ack_beyond_sent_refused` + `ack_beyondSent_iff` (an ACK at or beyond
+  `nextSequence` is refused without effect), `step_preserves_ackInv`
+  (unconditional watermark integrity), `retained_record_ack_advances` +
+  `ack_beyond_boundary_does_not_strand` (no stranded record),
   `fail_retrying_within_budget`, `fail_exhausted_is_terminal`,
   `step_change_sound`.
 - `LazilyFormal/EffectCas.lean` — generic effect CAS (`EffectCasCore`,

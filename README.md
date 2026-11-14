@@ -171,9 +171,11 @@ prune/replay, and append-before-ack remains replayable.
   and invalidates no reader), reconnect replay that preserves the sequence space
   and watermark, bounded retry with terminal exhaustion, no duplicated retained
   record (`step_preserves_inv`), and invalidation soundness (every changed reader
-  projection is reported, `step_change_sound`). `step_preserves_ackInv` /
-  `ack_beyond_boundary_strands_record` pin the one gap found: an ACK beyond the
-  assigned sequence space strands later records (see *Spec gaps* below). Every
+  projection is reported, `step_change_sound`). An ACK at or beyond the assigned
+  sequence space is refused without effect (`ack_beyond_sent_refused`,
+  `ack_beyondSent_iff`), so watermark integrity holds for every operation
+  (`step_preserves_ackInv`) and no retained record is ever stranded
+  (`retained_record_ack_advances`, `ack_beyond_boundary_does_not_strand`). Every
   `lazily-spec/conformance/egress/egress_*.json` trace is replayed in the kernel
   by `LazilyFormal/Conformance/EgressCorpus.lean`.
 - **`LazilyFormal/EffectCas.lean`** — the generic keyed effect compare-and-swap
@@ -634,22 +636,25 @@ script carries no semantics — the kernel makes every comparison — and refuse
 any fixture key it does not recognise. Bridged today: `conformance/egress/`
 (`egress_*.json`, `effect_cas.json`). After a fixture change, `make bridge-sync`.
 
-### Spec gaps found by the models
+### Spec gaps found by the models (closed)
 
-- **Egress ACK beyond the sequence space.** `ack(generation, through)` advances
-  whenever `through` exceeds the watermark, including `through ≥ next_sequence`.
-  The watermark then covers sequences not yet assigned; the next enqueued record
-  sits at or below it and its genuine ACK is `unchanged`
-  (`Egress.ack_beyond_boundary_strands_record`). Watermark integrity holds
-  exactly for ACKs inside the assigned space (`Egress.step_preserves_ackInv`).
+- **Egress ACK beyond the sequence space.** The spec used to advance on any
+  `through` above the watermark, including `through ≥ next_sequence`, which
+  stranded the next enqueued record under the watermark. lazily-spec now refuses
+  it with `beyond_sent { next_sequence }` (no state change, no invalidation);
+  the model proves the refusal (`Egress.ack_beyond_sent_refused`) and
+  unconditional watermark integrity (`Egress.step_preserves_ackInv`), and
+  `egress_ordered_ack.json` pins it.
 - **Egress reconnect `pending` invalidation.** Reconnect rewrites every retained
   envelope to the new generation, which changes the `pending` projection even
   when nothing was in flight or parked. The model reports `pending` whenever
-  anything is retained (`Egress.step_change_sound`); no corpus step pins the
-  pending-only reconnect.
+  anything is retained (`Egress.step_change_sound`); `egress_generation_fence.json`
+  now pins the replay-free reconnect (`invalidates.pending = true`).
 - **Effect CAS equal-epoch idempotence.** The spec compares the *immutable*
-  intent (initial expected authority); the corpus has no equal-epoch re-upsert,
-  so the comparison is unpinned. The model follows the spec text.
+  intent (initial expected authority), and so does the model.
+  `effect_cas.json` (`ordered_plan_resumes_after_partial_success`) now re-sends
+  the original intent after a plan step advanced the expected authority, while
+  pending and while in flight; both are `unchanged`.
 
 ## The lazily family
 

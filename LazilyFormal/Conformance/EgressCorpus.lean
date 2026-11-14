@@ -8,10 +8,10 @@ every reader invalidation of every step.
 Regenerate with `make bridge-sync`; `make check` fails when this file no
 longer matches the canonical corpus. Source fixtures (sha256):
 
-* `lazily-spec/conformance/egress/egress_ordered_ack.json` — `bd95b5edb4adf3f150b126c3bc301b9fe2a5cf0ff82f91838d5c66578f4a4f67`
+* `lazily-spec/conformance/egress/egress_ordered_ack.json` — `3c59d4fef23bdc07c32e29cb5c1ba7365a9838218120fb3a51a8ea1e832f905e`
 * `lazily-spec/conformance/egress/egress_inflight_window.json` — `84619f372d1da3f8ad31baacb8998638cf3ace4f81f6d8cfb92254d7aebe74f3`
 * `lazily-spec/conformance/egress/egress_retry_budget.json` — `ca37e9ec6d4b944b392a60ac82b506c6430a8bc0ac468dc579d593b8b687e097`
-* `lazily-spec/conformance/egress/egress_generation_fence.json` — `3516b23426319cfa5e84b63ae2acad45be096ec15885a3cde0127111018cf254`
+* `lazily-spec/conformance/egress/egress_generation_fence.json` — `aef8f6a5613ca641c60188ad9c4bc9b38b0edffeee2f6bd2dcb8c24fba64bd63`
 -/
 
 import LazilyFormal.Egress
@@ -104,7 +104,36 @@ def egress_ordered_ack_steps : List (Expected Nat) := [
     inflight := []
     ackedThrough := (some 1)
     retry := none
-    invalidates := { pending := false, inflight := true, ackedThrough := true, retry := false } }
+    invalidates := { pending := false, inflight := true, ackedThrough := true, retry := false } },
+  { op := .ack 1 2
+    returns := .ack (.beyondSent 2)
+    generation := 1
+    nextSequence := 2
+    pending := []
+    inflight := []
+    ackedThrough := (some 1)
+    retry := none
+    invalidates := { pending := false, inflight := false, ackedThrough := false, retry := false } },
+  { op := .enqueue 30
+    returns := .sequence 2
+    generation := 1
+    nextSequence := 3
+    pending := [
+        { generation := 1, sequence := 2, attempt := 0, payload := 30 }
+      ]
+    inflight := []
+    ackedThrough := (some 1)
+    retry := none
+    invalidates := { pending := true, inflight := false, ackedThrough := false, retry := false } },
+  { op := .ack 1 2
+    returns := .ack (.advanced 2)
+    generation := 1
+    nextSequence := 3
+    pending := []
+    inflight := []
+    ackedThrough := (some 2)
+    retry := none
+    invalidates := { pending := true, inflight := false, ackedThrough := true, retry := false } }
 ]
 
 /-- The model replays `egress_ordered_ack.json` exactly. -/
@@ -377,6 +406,30 @@ def egress_generation_fence_steps : List (Expected Nat) := [
         { generation := 4, sequence := 0, attempt := 2, payload := 11 }
       ]
     ackedThrough := none
+    retry := none
+    invalidates := { pending := true, inflight := false, ackedThrough := false, retry := false } },
+  { op := .ack 4 0
+    returns := .ack (.advanced 0)
+    generation := 4
+    nextSequence := 3
+    pending := [
+        { generation := 4, sequence := 1, attempt := 0, payload := 12 },
+        { generation := 4, sequence := 2, attempt := 0, payload := 13 }
+      ]
+    inflight := []
+    ackedThrough := (some 0)
+    retry := none
+    invalidates := { pending := false, inflight := true, ackedThrough := true, retry := false } },
+  { op := .reconnect 5
+    returns := .reconnect (.advanced 5 0)
+    generation := 5
+    nextSequence := 3
+    pending := [
+        { generation := 5, sequence := 1, attempt := 0, payload := 12 },
+        { generation := 5, sequence := 2, attempt := 0, payload := 13 }
+      ]
+    inflight := []
+    ackedThrough := (some 0)
     retry := none
     invalidates := { pending := true, inflight := false, ackedThrough := false, retry := false } }
 ]

@@ -185,6 +185,9 @@ def egress_returns(obj: Any, where: str) -> str:
         if status == "unchanged":
             _, through = take(obj, "ack", "through", where=where)
             return f".ack (.unchanged {opt_nat(through, where)})"
+        if status == "beyond_sent":
+            _, next_sequence = take(obj, "ack", "next_sequence", where=where)
+            return f".ack (.beyondSent {nat(next_sequence, where)})"
         if status == "stale_generation":
             _, current = take(obj, "ack", "current", where=where)
             return f".ack (.staleGeneration {nat(current, where)})"

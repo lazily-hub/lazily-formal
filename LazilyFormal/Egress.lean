@@ -19,6 +19,12 @@ Universal results:
   assignment is monotone; `enqueue` hands out exactly the old boundary.
 * `step_watermark_monotone`, `acknowledgement_monotone` — the cumulative ACK
   watermark never moves backward under any operation.
+* `ack_beyond_sent_refused`, `ack_beyondSent_iff` — an ACK at or beyond
+  `nextSequence` acknowledges never-assigned data and is refused without
+  changing state or invalidating a reader; `step_preserves_ackInv` — hence the
+  watermark lies inside the assigned sequence space and below every retained
+  record after every operation, and `retained_record_ack_advances` — a genuine
+  ACK for any retained record advances (no record is ever stranded).
 * `stale_generation_preserves_state` — every send-side transition from a
   fenced (stale) attachment changes no state and invalidates no reader.
 * `reconnect_advances_and_preserves_ack` — a legitimate reconnect strictly
@@ -33,7 +39,9 @@ Universal results:
   retries are bounded by the budget, and an exhausted record can never be
   scheduled again.
 * `step_change_sound` — every change to a reader projection is reported as an
-  invalidation of that reader (no stale reader).
+  invalidation of that reader (no stale reader); in particular a reconnect that
+  replays nothing still invalidates `pending` when it rewrites retained
+  never-claimed envelopes to the new generation.
 -/
 
 namespace LazilyFormal.Egress
@@ -97,6 +105,9 @@ inductive ClaimResult (T : Type) where
 inductive AckResult where
   | advanced (through : Nat)
   | unchanged (through : Option Nat)
+  /-- `through ≥ nextSequence`: the peer acknowledged a sequence that was never
+  assigned (so never sent). A protocol error, refused without effect. -/
+  | beyondSent (nextSequence : Nat)
   | staleGeneration (current : Nat)
   deriving Repr, DecidableEq
 
@@ -222,10 +233,14 @@ def claim (s : State T) (generation : Nat) : State T × Change × ClaimResult T 
 /-- Keep only records strictly above a cumulative acknowledgement. -/
 def above (through : Nat) (e : Envelope T) : Bool := decide (through < e.sequence)
 
-/-- Advance the cumulative watermark and prune every record at or below it. -/
+/-- Advance the cumulative watermark and prune every record at or below it. An
+acknowledgement beyond the assigned sequence space (`through ≥ nextSequence`) is
+refused: it changes no state and invalidates no reader. -/
 def ack (s : State T) (generation through : Nat) : State T × Change × AckResult :=
   if generation ≠ s.generation then
     (s, Change.none, .staleGeneration s.generation)
+  else if s.nextSequence ≤ through then
+    (s, Change.none, .beyondSent s.nextSequence)
   else if ackCovered s.ackedThrough through then
     (s, Change.none, .unchanged s.ackedThrough)
   else
@@ -411,13 +426,15 @@ theorem acknowledgement_monotone (s : State T) (generation through : Nat) :
   · exact Nat.le_refl _
   · split
     · exact Nat.le_refl _
-    · rename_i h
-      cases hs : s.ackedThrough with
-      | none => simp [watermark]
-      | some c =>
-          simp [ackCovered, hs] at h
-          simp [watermark]
-          omega
+    · split
+      · exact Nat.le_refl _
+      · rename_i h
+        cases hs : s.ackedThrough with
+        | none => simp [watermark]
+        | some c =>
+            simp [ackCovered, hs] at h
+            simp [watermark]
+            omega
 
 /-- An advancing acknowledgement strictly raises the watermark. -/
 theorem ack_advanced_strict (s : State T) (generation through : Nat) (c : Nat)
@@ -425,10 +442,12 @@ theorem ack_advanced_strict (s : State T) (generation through : Nat) (c : Nat)
     c < watermark (ack s generation through).1.ackedThrough := by
   unfold ack at *
   by_cases hg : generation = s.generation
-  · by_cases hc : ackCovered s.ackedThrough through = true
-    · simp [hg, hc] at h
-    · have hc' : c < through := by simp [ackCovered, hs] at hc; omega
-      simp [hg, hc, watermark, hc']
+  · by_cases hb : s.nextSequence ≤ through
+    · simp [hg, hb] at h
+    · by_cases hc : ackCovered s.ackedThrough through = true
+      · simp [hg, hb, hc] at h
+      · have hc' : c < through := by simp [ackCovered, hs] at hc; omega
+        simp [hg, hb, hc, watermark, hc']
   · simp [hg] at h
 
 /-- No operation moves the acknowledgement watermark backward. -/
@@ -519,7 +538,9 @@ theorem step_window_bounded (s : State T) (op : Op T)
       · exact h
       · split
         · exact h
-        · exact Nat.le_trans (List.length_filter_le _ _) h
+        · split
+          · exact h
+          · exact Nat.le_trans (List.length_filter_le _ _) h
   | fail g q =>
       simp only [step, fail]
       split
@@ -745,10 +766,12 @@ theorem step_seqRel (s : State T) (op : Op T) (h : Inv s) (hop : ∀ p, op ≠ .
       · exact seqRel_refl s
       · split
         · exact seqRel_refl s
-        · refine ⟨_, List.Perm.refl _, ?_⟩
-          simp only [seqs, all, List.map_append]
-          exact ((List.filter_sublist.map _).append (List.filter_sublist.map _)).append
-            (List.filter_sublist.map _)
+        · split
+          · exact seqRel_refl s
+          · refine ⟨_, List.Perm.refl _, ?_⟩
+            simp only [seqs, all, List.map_append]
+            exact ((List.filter_sublist.map _).append (List.filter_sublist.map _)).append
+              (List.filter_sublist.map _)
   | fail g q =>
       simp only [step, fail]
       split
@@ -860,16 +883,16 @@ theorem step_preserves_inv (s : State T) (op : Op T) (h : Inv s) : Inv (step s o
       exact inv_of_seqRel h (step_seqRel s _ h (fun _ hc => by cases hc))
         (step_nextSequence_monotone s _)
 
-/-! ### Watermark integrity and the beyond-boundary ACK gap
+/-! ### Watermark integrity and the beyond-boundary ACK refusal
 
-`lazily-spec` accepts any `ack(generation, through)` whose `through` exceeds the
-current watermark, including one beyond the assigned sequence space
-(`through ≥ next_sequence`). Such an ACK lifts the watermark over sequences that
-have not been enqueued yet; the next enqueue then retains a record at or below
-the watermark, and the receiver's genuine ACK for it is reported `unchanged`
-(`ack_beyond_boundary_strands_record`). The watermark-integrity invariant
-therefore holds exactly for ACKs inside the assigned sequence space
-(`step_preserves_ackInv`). -/
+An `ack(generation, through)` with `through ≥ nextSequence` acknowledges a
+sequence that was never assigned. Accepting it would lift the watermark over a
+not-yet-enqueued sequence; the next enqueue would retain a record at or below
+the watermark, and the receiver's genuine ACK for it would be `unchanged` — the
+record would be stranded. The core therefore refuses it
+(`ack_beyond_sent_refused`), and the watermark-integrity invariant holds for
+every operation unconditionally (`step_preserves_ackInv`); in particular the
+formerly stranded trace now advances (`ack_beyond_boundary_does_not_strand`). -/
 
 /-- Every retained record lies strictly above the watermark, and the watermark
 lies inside the assigned sequence space. -/
@@ -887,19 +910,31 @@ private theorem ackInv_of_seqRel {s s' : State T} (ha : AckInv s) (hr : SeqRel s
   · rw [hack] at hc
     exact ha.above n (hl.subset (hp.mem_iff.mp hn')) c hc
 
-/-- An operation that acknowledges only assigned sequences. -/
-def Op.acksAssigned (s : State T) : Op T → Prop
-  | .ack _ through => through < s.nextSequence
-  | _ => True
-
 theorem ackInv_empty (policy : Policy) (generation : Nat) :
     AckInv (State.empty policy generation : State T) :=
   ⟨by simp [State.empty], by simp [seqs, all, State.empty]⟩
 
-/-- Watermark integrity is preserved by every operation that acknowledges only
-assigned sequences. -/
-theorem step_preserves_ackInv (s : State T) (op : Op T) (h : Inv s) (ha : AckInv s)
-    (hw : op.acksAssigned s) : AckInv (step s op).1 := by
+/-- An acknowledgement at or beyond the sequence boundary, from the current
+attachment, is refused: no state change, no reader invalidated, and the
+refusal names the boundary. -/
+theorem ack_beyond_sent_refused (s : State T) (through : Nat)
+    (beyond : s.nextSequence ≤ through) :
+    ack s s.generation through = (s, Change.none, .beyondSent s.nextSequence) := by
+  simp [ack, beyond]
+
+/-- The refusal is exactly the beyond-boundary case: from the current
+attachment, `beyondSent` is returned if and only if `through ≥ nextSequence`. -/
+theorem ack_beyondSent_iff (s : State T) (through n : Nat) :
+    (ack s s.generation through).2.2 = .beyondSent n ↔
+      s.nextSequence ≤ through ∧ n = s.nextSequence := by
+  unfold ack
+  by_cases hb : s.nextSequence ≤ through
+  · simp [hb, eq_comm]
+  · by_cases hc : ackCovered s.ackedThrough through = true <;> simp [hb, hc]
+
+/-- Watermark integrity is preserved by every operation. -/
+theorem step_preserves_ackInv (s : State T) (op : Op T) (h : Inv s) (ha : AckInv s) :
+    AckInv (step s op).1 := by
   cases op with
   | enqueue p =>
       have hp := enqueue_seqs s p
@@ -909,22 +944,24 @@ theorem step_preserves_ackInv (s : State T) (op : Op T) (h : Inv s) (ha : AckInv
       · subst h1; exact ha.bound c hc
       · exact ha.above n h1 c hc
   | ack g t =>
-      simp only [Op.acksAssigned] at hw
       simp only [step, ack]
       split
       · exact ha
       · split
         · exact ha
-        · refine ⟨fun c hc => ?_, fun n hn c hc => ?_⟩
-          · simp at hc
-            show c < s.nextSequence
-            omega
-          · simp at hc
-            subst hc
-            simp only [seqs, all, List.map_append, List.mem_append, List.mem_map,
-              List.mem_filter, above, decide_eq_true_eq] at hn
-            rcases hn with (⟨e, ⟨_, he⟩, rfl⟩ | ⟨e, ⟨_, he⟩, rfl⟩) | ⟨e, ⟨_, he⟩, rfl⟩ <;>
-              exact he
+        · rename_i hb
+          split
+          · exact ha
+          · refine ⟨fun c hc => ?_, fun n hn c hc => ?_⟩
+            · simp at hc
+              show c < s.nextSequence
+              omega
+            · simp at hc
+              subst hc
+              simp only [seqs, all, List.map_append, List.mem_append, List.mem_map,
+                List.mem_filter, above, decide_eq_true_eq] at hn
+              rcases hn with (⟨e, ⟨_, he⟩, rfl⟩ | ⟨e, ⟨_, he⟩, rfl⟩) | ⟨e, ⟨_, he⟩, rfl⟩ <;>
+                exact he
   | claim g =>
       refine ackInv_of_seqRel ha (step_seqRel s _ h (fun _ hc => by cases hc)) ?_
         (step_nextSequence_monotone s _)
@@ -942,19 +979,34 @@ theorem step_preserves_ackInv (s : State T) (op : Op T) (h : Inv s) (ha : AckInv
         (step_nextSequence_monotone s _)
       simp only [step, reconnect]; (repeat' split) <;> rfl
 
-/-- Counterexample for the unbounded ACK: an ACK past the sequence boundary
-lifts the watermark over a not-yet-enqueued sequence, so the record later
-assigned that sequence sits at or below the watermark and the receiver's ACK for
-it is `unchanged` — the record is stranded until an ACK beyond the stale
-watermark arrives. -/
-theorem ack_beyond_boundary_strands_record :
+/-- Under watermark integrity no retained record is stranded: a genuine
+cumulative ACK for any retained record's sequence, from the current attachment,
+advances (it is neither refused nor `unchanged`). -/
+theorem retained_record_ack_advances (s : State T) (h : Inv s) (ha : AckInv s)
+    (n : Nat) (hn : n ∈ seqs s) :
+    (ack s s.generation n).2.2 = .advanced n := by
+  have hlt : n < s.nextSequence := h.below n hn
+  have hb : ¬ s.nextSequence ≤ n := by omega
+  have hc : ackCovered s.ackedThrough n = false := by
+    cases hs : s.ackedThrough with
+    | none => rfl
+    | some c =>
+        have := ha.above n hn c hs
+        simp [ackCovered]; omega
+  simp [ack, hb, hc]
+
+/-- The trace that used to strand a record: an ACK past the sequence boundary
+is now refused, so the record later assigned that sequence is acknowledged by
+the receiver's genuine ACK. -/
+theorem ack_beyond_boundary_does_not_strand :
     let s0 : State Nat := State.empty ⟨1, 0, 1, 1⟩ 0
     let s1 := (step s0 (.ack 0 5)).1
     let s2 := (step s1 (.enqueue 42)).1
-    (step s0 (.ack 0 5)).2.2 = .ack (.advanced 5) ∧
+    (step s0 (.ack 0 5)).2.2 = .ack (.beyondSent 0) ∧
+      s1 = s0 ∧
       s2.pending.map Envelope.sequence = [0] ∧
-      (step s2 (.ack 0 0)).2.2 = .ack (.unchanged (some 5)) ∧
-      (step s2 (.ack 0 0)).1.pending = s2.pending := by
+      (step s2 (.ack 0 0)).2.2 = .ack (.advanced 0) ∧
+      (step s2 (.ack 0 0)).1.pending = [] := by
   decide
 
 /-! ### Reader invalidation soundness
@@ -997,17 +1049,19 @@ theorem step_change_sound (s : State T) (op : Op T) :
       · simp [ChangeSound]
       · split
         · simp [ChangeSound]
-        · refine ⟨?_, ?_, fun _ => rfl, ?_⟩
-          · intro h
-            simp only [decide_eq_true_eq]
-            intro hl
-            exact h (filter_eq_of_length hl)
-          · intro h
-            simp only [decide_eq_true_eq]
-            intro hl
-            exact h (filter_eq_of_length hl)
-          · intro h
-            cases hr : retryAtOrBelow s.retry t <;> simp_all
+        · split
+          · simp [ChangeSound]
+          · refine ⟨?_, ?_, fun _ => rfl, ?_⟩
+            · intro h
+              simp only [decide_eq_true_eq]
+              intro hl
+              exact h (filter_eq_of_length hl)
+            · intro h
+              simp only [decide_eq_true_eq]
+              intro hl
+              exact h (filter_eq_of_length hl)
+            · intro h
+              cases hr : retryAtOrBelow s.retry t <;> simp_all
   | fail g q =>
       simp only [step, fail]
       split
