@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: make check (lake build, conformance bridge, axiom audit)
+    runs-on: ubuntu-latest
+    steps:
+      # `make check` resolves the canonical corpus as a sibling checkout
+      # (LAZILY_SPEC_DIR=../lazily-spec), exactly as on a developer machine.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: lazily-formal
+
+      - name: Checkout canonical lazily-spec
+        uses: actions/checkout@v4
+        with:
+          repository: lazily-hub/lazily-spec
+          path: lazily-spec
+
+      - name: Install Lean toolchain and build
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: lazily-formal
+          auto-config: false
+          build: true
+          test: false
+          lint: false
+
+      - name: make check
+        working-directory: lazily-formal
+        run: make check

@@ -162,6 +162,37 @@ prune/replay, and append-before-ack remains replayable.
   retryable failure retains intent, `durable_through` is monotone, and stale
   generation/epoch receipts cannot clear a newer desire. Backs
   `lazily-spec/conformance/egress/latest_durable_projection.json`.
+- **`LazilyFormal/Egress.lean`** — transport-agnostic reactive egress
+  (`EgressCore`, `lazily-spec/docs/transport-egress.md`): a total reducer over
+  enqueue / claim / cumulative ACK / fail / `retry_now` / reconnect that returns
+  the next state, the reader-kind invalidations, and the API outcome. Proves
+  monotone sequence assignment and ACK watermark, the bounded unacknowledged
+  window, the send-side generation fence (a stale attachment changes no state
+  and invalidates no reader), reconnect replay that preserves the sequence space
+  and watermark, bounded retry with terminal exhaustion, no duplicated retained
+  record (`step_preserves_inv`), and invalidation soundness (every changed reader
+  projection is reported, `step_change_sound`). `step_preserves_ackInv` /
+  `ack_beyond_boundary_strands_record` pin the one gap found: an ACK beyond the
+  assigned sequence space strands later records (see *Spec gaps* below). Every
+  `lazily-spec/conformance/egress/egress_*.json` trace is replayed in the kernel
+  by `LazilyFormal/Conformance/EgressCorpus.lean`.
+- **`LazilyFormal/EffectCas.lean`** — the generic keyed effect compare-and-swap
+  (`EffectCasCore`, `lazily-spec/docs/durable-sinks.md` § "Generic effect
+  compare-and-swap", `#lzeffectcas`): stable identity and immutable intent,
+  opaque expected authority, keyed single flight, latest-wins supersession,
+  logical-clock retry, reconnect, exact terminal receipts, and resumable ordered
+  plans. Proves spec invariants 1–6: single flight and generation / logical-clock
+  gating; stale-generation and unknown-attempt receipts change no state; the
+  `applied_through` frontier is monotone and advances only from an exact
+  terminal apply (`appliedThrough_advances_only_by_exact_completion`), so a
+  superseded, retryable, or rejected attempt never moves it; retry and reconnect
+  preserve identity, cursor, and receipts; rejection is terminal and distinct
+  from retry; duplicate terminal receipts are idempotent; and the receipt-lineage
+  invariant (`step_preserves_wf`): every retained intent and terminal carries
+  exactly one receipt per completed plan step, in order — a completed effect
+  holds exactly one receipt per plan step (`completed_terminal_lineage`). Every
+  scenario of `lazily-spec/conformance/egress/effect_cas.json` is replayed in the
+  kernel by `LazilyFormal/Conformance/EffectCasCorpus.lean`.
 - **`LazilyFormal/SeqCrdt.lean`** — the move-aware sequence CRDT (`cell-model.md`
   § "Move-aware sequence order"): each element three independent LWW registers
   (value / position / deleted), a move a *single* LWW position reassignment.
@@ -555,6 +586,8 @@ of the element set. Every compute layer that has a pure-machine core is modeled:
 | Manufactured identity / stable-id alignment | `StableId.lean` | modeled |
 | Broadcast topic (`TopicCell`) — fan-out, durable cursor restart, retention GC | `TopicCell.lean` | modeled |
 | Latest durable projection egress — per-key supersession, single flight, retry, fenced acknowledgement | `LatestDurableProjection.lean` | modeled |
+| Reactive egress (`EgressCore`) — sequence, window, cumulative ACK, retry/exhaustion, generation fence, reader invalidation (`#lzegress`) | `Egress.lean` | modeled; corpus replayed in-kernel |
+| Generic effect CAS (`EffectCasCore`) — identity, expected authority, single flight, supersession, retry, reconnect, exact receipts, ordered plans (`#lzeffectcas`) | `EffectCas.lean` | modeled; corpus replayed in-kernel |
 | Free-text character CRDT (`TextCrdt`, base convergence + delta sync) | `TextCrdt.lean`, `TextCrdtSync.lean` | modeled |
 | Move-aware sequence CRDT (`SeqCrdt`) | `SeqCrdt.lean` | modeled |
 | Reactive family sync — membership propagation + materialize-on-ingest + derived-aggregate transparency (`#lzfamilysync`) | `FamilySync.lean` | modeled |
@@ -579,14 +612,44 @@ synchronization-model checker cannot shim).
 
 | Repo | Owns |
 |------|------|
-| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Source/Computed/Effect) + ComputedMap materialization (unified source/computed map, eager default / lazy opt-in, observational transparency) + thread-safe batch context + keyed collection (SourceMap/ComputedMap) + ordered tree (SourceTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle + causal receipt projection; universal proofs |
+| `lazily-formal` (this) | formal models: flat FSM kernel + full Harel chart + reactive graph kernel (Source/Computed/Effect) + ComputedMap materialization (unified source/computed map, eager default / lazy opt-in, observational transparency) + thread-safe batch context + keyed collection (SourceMap/ComputedMap) + ordered tree (SourceTree) + memoized semantic tree (SemTree) + manufactured identity (StableId) + free-text CRDT (TextCrdt base + delta sync) + move-aware sequence CRDT (SeqCrdt) + distributed signaling (peer FSM + roster) + async slot state + async effect lifecycle + causal receipt projection + reactive egress (`EgressCore`) + generic effect CAS (`EffectCasCore`); universal proofs; kernel-checked replays of the bridged conformance corpus |
 | `lazily-spec` | wire protocol + JSON schemas + IPC/CRDT Lean proofs + conformance fixtures (incl. `conformance/statechart/`) |
 | `lazily-rs` / `lazily-py` / `lazily-zig` / `lazily-kt` / `lazily-js` / `lazily-dart` / `lazily-go` / `lazily-cpp` | native implementations; replay the shared conformance fixtures |
 
 ## Verify
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the toolchain and verification
-command.
+command. `make check` runs three gates: `lake build` (every module, including the
+kernel-checked corpus replays under `LazilyFormal/Conformance/`), the
+conformance-bridge drift check against a sibling `lazily-spec` checkout, and an
+axiom audit (`scripts/AxiomAudit.lean`) proving every declaration depends only on
+`propext`, `Classical.choice`, and `Quot.sound` — no `sorry`, no `native_decide`.
+
+### Conformance bridge
+
+`scripts/gen-conformance-bridge.py` transcribes bridged `lazily-spec` fixtures
+into Lean data and a `theorem … := by decide` per trace asserting that the model
+replays every step (outcome, full projection, and reader invalidations). The
+script carries no semantics — the kernel makes every comparison — and refuses
+any fixture key it does not recognise. Bridged today: `conformance/egress/`
+(`egress_*.json`, `effect_cas.json`). After a fixture change, `make bridge-sync`.
+
+### Spec gaps found by the models
+
+- **Egress ACK beyond the sequence space.** `ack(generation, through)` advances
+  whenever `through` exceeds the watermark, including `through ≥ next_sequence`.
+  The watermark then covers sequences not yet assigned; the next enqueued record
+  sits at or below it and its genuine ACK is `unchanged`
+  (`Egress.ack_beyond_boundary_strands_record`). Watermark integrity holds
+  exactly for ACKs inside the assigned space (`Egress.step_preserves_ackInv`).
+- **Egress reconnect `pending` invalidation.** Reconnect rewrites every retained
+  envelope to the new generation, which changes the `pending` projection even
+  when nothing was in flight or parked. The model reports `pending` whenever
+  anything is retained (`Egress.step_change_sound`); no corpus step pins the
+  pending-only reconnect.
+- **Effect CAS equal-epoch idempotence.** The spec compares the *immutable*
+  intent (initial expected authority); the corpus has no equal-epoch re-upsert,
+  so the comparison is unpinned. The model follows the spec text.
 
 ## The lazily family
 

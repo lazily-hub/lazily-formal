@@ -132,9 +132,9 @@ replacement reads as `Inserted` (LCS 0). -/
 
 /-- "small edit is Edited": `... jumps over the lazy dog` → `... jumps over the sleepy dog`
 (one word differs of nine). -/
-example : classify [1,2,3,4,5,6,7,8,9] [1,2,3,4,5,6,7,10,9] = .edited := by native_decide
+example : classify [1,2,3,4,5,6,7,8,9] [1,2,3,4,5,6,7,10,9] = .edited := by decide +kernel
 
 /-- "genuine insert": unrelated replacement text has LCS 0 ⇒ `Inserted`. -/
-example : classify [1,2] [3,4,5,6,7] = .inserted := by native_decide
+example : classify [1,2] [3,4,5,6,7] = .inserted := by decide +kernel
 
 end LazilyFormal.StableId
